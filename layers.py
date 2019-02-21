@@ -89,15 +89,15 @@ class Generator(nn.Module):
 
 
 class Encoder(nn.Module):
-    "Core encoder is a stack of N layers"
+    """Core encoder is a stack of N layers"""
 
-    def __init__(self, layer, N):
+    def __init__(self, layer, n):
         super(Encoder, self).__init__()
-        self.layers = clones(layer, N)
+        self.layers = clones(layer, n)
         self.norm = LayerNorm(layer.size)
 
     def forward(self, x, mask):
-        "Pass the input (and mask) through each layer in turn."
+        """Pass the input (and mask) through each layer in turn."""
         for layer in self.layers:
             x = layer(x, mask)
         return self.norm(x)
@@ -114,12 +114,12 @@ class SublayerConnection(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x, sublayer):
-        "Apply residual connection to any sublayer function that maintains the same size."
+        """Apply residual connection to any sublayer function that maintains the same size."""
         return x + self.dropout(sublayer(self.norm(x)))
 
 
 class EncoderLayer(nn.Module):
-    "Encoder is made up of two sublayers, self-attn and feed forward (defined below)"
+    """Encoder is made up of two sublayers, self-attn and feed forward (defined below)"""
     def __init__(self, size, self_attn, feed_forward, dropout):
         super(EncoderLayer, self).__init__()
         self.self_attn = self_attn
@@ -128,17 +128,16 @@ class EncoderLayer(nn.Module):
         self.size = size
 
     def forward(self, x, mask):
-        "Follow Figure 1 (left) for connections."
         x = self.sublayer[0](x, lambda x: self.self_attn(x, x, x, mask))
         return self.sublayer[1](x, self.feed_forward)
 
 
 class Decoder(nn.Module):
-    "Generic N layer decoder with masking."
+    """Generic N layer decoder with masking."""
 
-    def __init__(self, layer, N):
+    def __init__(self, layer, n):
         super(Decoder, self).__init__()
-        self.layers = clones(layer, N)
+        self.layers = clones(layer, n)
         self.norm = LayerNorm(layer.size)
 
     def forward(self, x, memory, src_mask, tgt_mask):
@@ -148,7 +147,7 @@ class Decoder(nn.Module):
 
 
 class DecoderLayer(nn.Module):
-    "Decoder is made up of three sublayers, self-attn, src-attn, and feed forward (defined below)"
+    """Decoder is made up of three sublayers, self-attn, src-attn, and feed forward (defined below)"""
 
     def __init__(self, size, self_attn, src_attn, feed_forward, dropout):
         super(DecoderLayer, self).__init__()
@@ -159,7 +158,6 @@ class DecoderLayer(nn.Module):
         self.sublayer = clones(SublayerConnection(size, dropout), 2 + (src_attn is not None))
 
     def forward(self, x, memory, src_mask, tgt_mask):
-        "Follow Figure 1 (right) for connections."
         m = memory
         x = self.sublayer[0](x, lambda x: self.self_attn(x, x, x, tgt_mask))
         if self.src_attn is not None:
@@ -198,7 +196,7 @@ class MultiHeadedAttention(nn.Module):
 
 
 class PositionwiseFeedForward(nn.Module):
-    "Implements FFN equation."
+    """Implements FFN equation."""
     def __init__(self, d_model, d_ff, dropout=0.1):
         super(PositionwiseFeedForward, self).__init__()
         # Torch linears have a `b` by default.
@@ -211,7 +209,7 @@ class PositionwiseFeedForward(nn.Module):
 
 
 class PositionalEncoding(nn.Module):
-    "Implement the PE function."
+    """Implement the PE function."""
 
     def __init__(self, d_model, dropout, max_len=5000):
         super(PositionalEncoding, self).__init__()

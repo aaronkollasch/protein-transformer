@@ -196,9 +196,15 @@ class TransformerTrainer:
         if model_eval:
             self.model.eval()
 
-        print('    step  step-t  CE-loss     bit-per-char', flush=True)
-        for i_iter in range(num_samples):  # TODO implement sampling
-            output = {
+        print('sample    step  step-t  CE-loss     bit-per-char', flush=True)
+        output = {
+            'name': [],
+            'mean': [],
+            'bitperchar': [],
+            'sequence': []
+        }
+        for i_iter in range(num_samples):
+            output_i = {
                 'name': [],
                 'mean': [],
                 'bitperchar': [],
@@ -212,24 +218,31 @@ class TransformerTrainer:
                         batch[key] = batch[key].to(self.device, non_blocking=True)
 
                 with torch.no_grad():
-                    output_logits = self.model(batch['input'], batch['mask'])
-                    pred = self.model.predict(output_logits)
+                    src_mask, tgt_mask = make_std_mask(batch['decoder_input'], batch['decoder_input'])
+                    output_logits = self.model(batch['decoder_input'], batch['decoder_input'],
+                                               src_mask, tgt_mask)
+                    losses = self.model.reconstruction_loss(
+                        output_logits, batch['decoder_output'], batch['decoder_mask'])
 
-                    ce_loss = losses['ce_loss_per_seq']
-                    if self.run_fr:
-                        ce_loss_mean = ce_loss.mean(0)
-                    else:
-                        ce_loss_mean = ce_loss
-                    ce_loss_per_char = ce_loss_mean / batch['prot_decoder_mask'].sum([1, 2, 3])
+                    ce_loss_per_seq = losses['ce_loss_per_seq'].cpu()
+                    bitperchar_per_seq = losses['bitperchar_per_seq'].cpu()
 
-                output['name'].extend(batch['names'])
-                output['sequence'].extend(batch['sequences'])
-                output['mean'].extend(ce_loss_mean.numpy())
-                output['bitperchar'].extend(ce_loss_per_char.numpy())
+                output_i['name'].extend(batch['names'])
+                output_i['sequence'].extend(batch['sequences'])
+                output_i['mean'].extend(ce_loss_per_seq.numpy())
+                output_i['bitperchar'].extend(bitperchar_per_seq.numpy())
 
-                print("{: 8d} {:6.3f} {:11.6f} {:11.6f}".format(
-                    i_batch, time.time()-start, ce_loss_mean.mean(), ce_loss_per_char.mean()),
+                print("{: 4d} {: 8d} {:6.3f} {:11.6f} {:11.6f}".format(
+                    i_iter, i_batch, time.time()-start, ce_loss_per_seq.mean(), bitperchar_per_seq.mean()),
                     flush=True)
+
+            output['name'] = output_i['name']
+            output['sequence'] = output_i['sequence']
+            output['bitperchar'].append(output_i['bitperchar'])
+            output['mean'].append(output_i['mean'])
+
+        output['bitperchar'] = np.array(output['bitperchar']).mean(0)
+        output['mean'] = np.array(output['mean']).mean(0)
 
         self.model.train()
         return output
