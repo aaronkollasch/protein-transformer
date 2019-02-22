@@ -70,7 +70,7 @@ class TransformerTrainer:
         self.model = model
         self.loader = data_loader
 
-        self.run_fr = 'fr' in model.model_type
+        self.run_fr = 'fr' in model.MODEL_TYPE
         self.optimizer_type = getattr(optim, self.params['optimizer'])
         self.logger = logger
         self.logger.trainer = self

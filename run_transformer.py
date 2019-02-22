@@ -69,9 +69,13 @@ elif args.preset is not None:
     warnings.warn(f"Unrecognized preset: {args.preset}")
 
 if args.run_name is None:
-    args.run_name = f"{args.dataset}_n-{args.num_layers}_h-{args.num_heads}" \
-        f"_d-{args.d_model}_dff-{args.d_ff}_dropout-{args.dropout_p}" \
-        f"_rseed-{args.r_seed}_start-{time.strftime('%y%b%d_%H%M', time.localtime())}"
+    if args.preset is not None:
+        args.run_name = f"{args.dataset}_transformer-{args.preset}_dropout-{args.dropout_p}" \
+            f"_rseed-{args.r_seed}_start-{time.strftime('%y%b%d_%H%M', time.localtime())}"
+    else:
+        args.run_name = f"{args.dataset}_n-{args.num_layers}_h-{args.num_heads}" \
+            f"_d-{args.d_model}_dff-{args.d_ff}_dropout-{args.dropout_p}" \
+            f"_rseed-{args.r_seed}_start-{time.strftime('%y%b%d_%H%M', time.localtime())}"
 
 restore_args = " \\\n  ".join(sys.argv[1:])
 if "--run-name" not in restore_args:

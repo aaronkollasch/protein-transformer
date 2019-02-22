@@ -421,8 +421,8 @@ class TransformerDecoder(BaseModel):
 
 
 class TransformerDecoderFR(nn.Module):
-    sub_model_class = TransformerDecoder
-    model_type = 'transformer_decoder_fr'
+    SUB_MODEL_CLASS = TransformerDecoder
+    MODEL_TYPE = 'transformer_decoder_fr'
 
     def __init__(
             self,
@@ -430,8 +430,8 @@ class TransformerDecoderFR(nn.Module):
     ):
         super(TransformerDecoderFR, self).__init__()
         self.model = nn.ModuleDict({
-            'f': self.sub_model_class(**kwargs),
-            'r': self.sub_model_class(**kwargs)
+            'f': self.SUB_MODEL_CLASS(**kwargs),
+            'r': self.SUB_MODEL_CLASS(**kwargs)
         })
         self.dims = self.model.f.dims
         self.hyperparams = self.model.f.hyperparams
