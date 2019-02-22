@@ -3,6 +3,7 @@ import sys
 import argparse
 import time
 import json
+import warnings
 
 import numpy as np
 import torch
@@ -17,10 +18,18 @@ working_dir = '/n/groups/marks/users/aaron/transformer'
 data_dir = '/n/groups/marks/projects/autoregressive'
 
 parser = argparse.ArgumentParser(description="Train an autoregressive model on a collection of sequences.")
+parser.add_argument("--preset", type=str, default=None,
+                    help="Choose hyperparameter preset")
 parser.add_argument("--d-model", metavar='D', type=int, default=512,
                     help="Number of channels in attention head.")
+parser.add_argument("--d-ff", metavar='D', type=int, default=2048,
+                    help="Number of channels in attention head.")
+parser.add_argument("--num-heads", type=int, default=8,
+                    help="Number of attention heads.")
 parser.add_argument("--num-layers", type=int, default=6,
                     help="Number of layers.")
+parser.add_argument("--fr", "--run-fr", action='store_true',
+                    help="Run forward and reverse")
 parser.add_argument("--batch-size", metavar='N', type=int, default=10,
                     help="Batch size.")
 parser.add_argument("--num-iterations", type=int, default=500005,
@@ -41,8 +50,27 @@ parser.add_argument("--no-cuda", action='store_true',
                     help="Disable GPU training")
 args = parser.parse_args()
 
+if args.preset == 'small':
+    args.d_model = 128
+    args.d_ff = 512
+    args.num_heads = 8
+    args.num_layers = 4
+elif args.preset == 'medium':
+    args.d_model = 256
+    args.d_ff = 1024
+    args.num_heads = 8
+    args.num_layers = 5
+elif args.preset == 'large':
+    args.d_model = 512
+    args.d_ff = 2048
+    args.num_heads = 8
+    args.num_layers = 6
+elif args.preset is not None:
+    warnings.warn(f"Unrecognized preset: {args.preset}")
+
 if args.run_name is None:
-    args.run_name = f"{args.dataset}_n-{args.num_layers}_d-{args.d_model}_dropout-{args.dropout_p}" \
+    args.run_name = f"{args.dataset}_n-{args.num_layers}_h-{args.num_heads}" \
+        f"_d-{args.d_model}_dff-{args.d_ff}_dropout-{args.dropout_p}" \
         f"_rseed-{args.r_seed}_start-{time.strftime('%y%b%d_%H%M', time.localtime())}"
 
 restore_args = " \\\n  ".join(sys.argv[1:])
@@ -98,7 +126,7 @@ dataset = data_loaders.SingleFamilyDataset(
     batch_size=args.batch_size,
     working_dir=data_dir,
     dataset=args.dataset,
-    matching=False,
+    matching=args.fr,
     unlimited_epoch=True,
     output_shape='NLC',
 )
@@ -109,24 +137,31 @@ loader = data_loaders.GeneratorDataLoader(
     worker_init_fn=_init_fn
 )
 
+if args.fr:
+    model_type = models.TransformerDecoderFR
+else:
+    model_type = models.TransformerDecoder
+
 if args.restore is not None:
     print("Restoring model from:", args.restore)
     checkpoint = torch.load(args.restore, map_location='cpu' if device.type == 'cpu' else None)
     dims = checkpoint['model_dims']
     hyperparams = checkpoint['model_hyperparams']
     trainer_params = checkpoint['train_params']
-    model = models.TransformerDecoder(dims=dims, hyperparams=hyperparams)
+    model = model_type(dims=dims, hyperparams=hyperparams)
 else:
     checkpoint = args.restore
     trainer_params = None
     hyperparams = {
         'transformer': {
             'd_model': args.d_model,
+            'd_ff': args.d_ff,
+            'num_heads': args.num_heads,
             'num_layers': args.num_layers,
             'dropout_p': args.dropout_p,
         }
     }
-    model = models.TransformerDecoder(hyperparams=hyperparams)
+    model = model_type(hyperparams=hyperparams)
 model.to(device)
 
 trainer = trainers.TransformerTrainer(
@@ -151,10 +186,13 @@ trainer = trainers.TransformerTrainer(
 if args.restore is not None:
     trainer.load_state(checkpoint)
 
+print()
+print("Model:", model_type.__name__)
 print("Hyperparameters:", json.dumps(model.hyperparams, indent=4))
 print("Training parameters:", json.dumps(
     {key: value for key, value in trainer.params.items() if key != 'snapshot_exec_template'}, indent=4))
 print("Dataset parameters:", json.dumps(dataset.params, indent=4))
 print("Num trainable parameters:", model.parameter_count())
+print()
 
 trainer.train(steps=args.num_iterations)

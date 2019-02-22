@@ -70,6 +70,7 @@ class TransformerTrainer:
         self.model = model
         self.loader = data_loader
 
+        self.run_fr = 'fr' in model.model_type
         self.optimizer_type = getattr(optim, self.params['optimizer'])
         self.logger = logger
         self.logger.trainer = self
@@ -104,11 +105,23 @@ class TransformerTrainer:
             # data_load_time = time.time()-start
 
             try:
-                src_mask, tgt_mask = make_std_mask(batch['decoder_input'], batch['decoder_input'])
-                output_logits = self.model(batch['decoder_input'], batch['decoder_input'],
-                                           src_mask, tgt_mask)
-                losses = self.model.calculate_loss(
-                    output_logits, batch['decoder_output'], batch['decoder_mask'], n_eff=n_eff)
+                if self.run_fr:
+                    src_mask, tgt_mask = make_std_mask(batch['decoder_input'], batch['decoder_input'])
+                    _, tgt_mask_r = make_std_mask(None, batch['decoder_input_r'])
+                    output_logits_f, output_logits_r = self.model(
+                        batch['decoder_input'], batch['decoder_input'],
+                        src_mask, tgt_mask,
+                        batch['decoder_input_r'], tgt_mask_r)
+                    losses = self.model.calculate_loss(
+                        output_logits_f, batch['decoder_output'], batch['decoder_mask'], n_eff,
+                        output_logits_r, batch['decoder_output_r'], batch['decoder_mask'], n_eff
+                    )
+                else:
+                    src_mask, tgt_mask = make_std_mask(batch['decoder_input'], batch['decoder_input'])
+                    output_logits = self.model(batch['decoder_input'], batch['decoder_input'],
+                                               src_mask, tgt_mask)
+                    losses = self.model.calculate_loss(
+                        output_logits, batch['decoder_output'], batch['decoder_mask'], n_eff=n_eff)
 
                 if step in [10, 100, 1000, 10000]:
                     print(f'step {step:6d}: '
@@ -131,6 +144,8 @@ class TransformerTrainer:
 
             for key in losses:
                 losses[key] = losses[key].detach()
+                if self.run_fr and 'per_seq' not in key and '_f' not in key and '_r' not in key:
+                    losses[key] /= 2
             losses.update({'grad_norm': total_norm})
 
             if step % self.params['snapshot_interval'] == 0:
@@ -200,16 +215,27 @@ class TransformerTrainer:
         output = {
             'name': [],
             'mean': [],
+            'forward': [],
+            'reverse': [],
             'bitperchar': [],
             'sequence': []
         }
+        if not self.run_fr:
+            del output['forward']
+            del output['reverse']
+
         for i_iter in range(num_samples):
             output_i = {
                 'name': [],
                 'mean': [],
+                'forward': [],
+                'reverse': [],
                 'bitperchar': [],
                 'sequence': []
             }
+            if not self.run_fr:
+                del output['forward']
+                del output['reverse']
 
             for i_batch, batch in enumerate(data_loader):
                 start = time.time()
@@ -218,14 +244,30 @@ class TransformerTrainer:
                         batch[key] = batch[key].to(self.device, non_blocking=True)
 
                 with torch.no_grad():
-                    src_mask, tgt_mask = make_std_mask(batch['decoder_input'], batch['decoder_input'])
-                    output_logits = self.model(batch['decoder_input'], batch['decoder_input'],
-                                               src_mask, tgt_mask)
-                    losses = self.model.reconstruction_loss(
-                        output_logits, batch['decoder_output'], batch['decoder_mask'])
+                    if self.run_fr:
+                        src_mask, tgt_mask = make_std_mask(batch['decoder_input'], batch['decoder_input'])
+                        _, tgt_mask_r = make_std_mask(None, batch['decoder_input_r'])
+                        output_logits_f, output_logits_r = self.model(
+                            batch['decoder_input'], batch['decoder_input'],
+                            src_mask, tgt_mask,
+                            batch['decoder_input_r'], tgt_mask_r)
+                        losses = self.model.reconstruction_loss(
+                            output_logits_f, batch['decoder_output'], batch['decoder_mask'],
+                            output_logits_r, batch['decoder_output_r'], batch['decoder_mask']
+                        )
+                    else:
+                        src_mask, tgt_mask = make_std_mask(batch['decoder_input'], batch['decoder_input'])
+                        output_logits = self.model(batch['decoder_input'], batch['decoder_input'],
+                                                   src_mask, tgt_mask)
+                        losses = self.model.reconstruction_loss(
+                            output_logits, batch['decoder_output'], batch['decoder_mask'])
 
                     ce_loss_per_seq = losses['ce_loss_per_seq'].cpu()
                     bitperchar_per_seq = losses['bitperchar_per_seq'].cpu()
+
+                    if self.run_fr:
+                        ce_loss_per_seq = ce_loss_per_seq.mean(0)
+                        bitperchar_per_seq = bitperchar_per_seq.mean(0)
 
                 output_i['name'].extend(batch['names'])
                 output_i['sequence'].extend(batch['sequences'])

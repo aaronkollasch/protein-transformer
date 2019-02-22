@@ -12,6 +12,10 @@ from functions import attention, normalize
 from utils import clones
 
 
+class HyperparameterError(ValueError):
+    pass
+
+
 class LayerNorm(nn.Module):
     """Normalizes across C for input NLC
     """
@@ -77,7 +81,6 @@ class EncoderDecoder(nn.Module):
 
 class Generator(nn.Module):
     """Define standard linear + softmax generation step.
-    From http://nlp.seas.harvard.edu/2018/04/03/attention.html
     """
     def __init__(self, d_model, vocab, dim=-1):
         super(Generator, self).__init__()
@@ -101,6 +104,9 @@ class Encoder(nn.Module):
         for layer in self.layers:
             x = layer(x, mask)
         return self.norm(x)
+
+    def weight_costs(self):
+        return [p.pow(2).sum() for p in self.parameters()]
 
 
 class SublayerConnection(nn.Module):
@@ -145,6 +151,9 @@ class Decoder(nn.Module):
             x = layer(x, memory, src_mask, tgt_mask)
         return self.norm(x)
 
+    def weight_costs(self):
+        return [p.pow(2).sum() for p in self.parameters()]
+
 
 class DecoderLayer(nn.Module):
     """Decoder is made up of three sublayers, self-attn, src-attn, and feed forward (defined below)"""
@@ -166,10 +175,12 @@ class DecoderLayer(nn.Module):
 
 
 class MultiHeadedAttention(nn.Module):
+    """From http://nlp.seas.harvard.edu/2018/04/03/attention.html"""
     def __init__(self, h, d_model, dropout=0.1):
         """Take in model size and number of heads."""
         super(MultiHeadedAttention, self).__init__()
-        assert d_model % h == 0
+        if d_model % h != 0:
+            raise HyperparameterError(f"d_model {d_model} not divisible by num_heads {h}")
         # We assume d_v always equals d_k
         self.d_k = d_model // h
         self.h = h
@@ -251,7 +262,8 @@ class LabelSmoothing(nn.Module):
         self.size = size
 
     def forward(self, x, target):
-        assert x.size(self.c_dim) == self.size
+        if x.size(self.c_dim) != self.size:
+            raise HyperparameterError(f"Channel size mismatch: {x.size(self.c_dim)} != {self.size}")
         true_dist = target.data.clone()
         true_dist.fill_(self.smoothing / (self.size - 1))
         true_dist.masked_fill_(target == 1, self.confidence)

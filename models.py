@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from utils import recursive_update
+from utils import recursive_update, comb_losses
 import layers
 
 
@@ -146,14 +146,10 @@ class Transformer(BaseModel):
                 nn.init.xavier_uniform_(p)
 
     def weight_costs(self):
-        return []
-        # return (
-        #     self.rnn.weight_costs() +
-        #     [cost
-        #      for name, module in self.dense_net_modules.items()
-        #      if name.startswith('linear') or name.startswith('norm')
-        #      for cost in module.weight_costs()]
-        # )
+        return (
+            self.encoder.weight_costs() +
+            self.decoder.weight_costs()
+        )
 
     def forward(self, src, tgt, src_mask, tgt_mask):
         """
@@ -337,14 +333,9 @@ class TransformerDecoder(BaseModel):
                 nn.init.xavier_uniform_(p)
 
     def weight_costs(self):
-        return []
-        # return (
-        #     self.rnn.weight_costs() +
-        #     [cost
-        #      for name, module in self.dense_net_modules.items()
-        #      if name.startswith('linear') or name.startswith('norm')
-        #      for cost in module.weight_costs()]
-        # )
+        return (
+            self.decoder.weight_costs()
+        )
 
     def forward(self, src, tgt, src_mask, tgt_mask):
         """
@@ -427,3 +418,78 @@ class TransformerDecoder(BaseModel):
         }
         output.update(reconstruction_loss)
         return output
+
+
+class TransformerDecoderFR(nn.Module):
+    sub_model_class = TransformerDecoder
+    model_type = 'transformer_decoder_fr'
+
+    def __init__(
+            self,
+            **kwargs
+    ):
+        super(TransformerDecoderFR, self).__init__()
+        self.model = nn.ModuleDict({
+            'f': self.sub_model_class(**kwargs),
+            'r': self.sub_model_class(**kwargs)
+        })
+        self.dims = self.model.f.dims
+        self.hyperparams = self.model.f.hyperparams
+
+        # make dictionaries the same in memory
+        self.model.r.dims = self.model.f.dims
+        self.model.f.hyperparams = self.model.f.hyperparams
+
+    @property
+    def step(self):
+        return self.model.f.step
+
+    @step.setter
+    def step(self, new_step):
+        self.model.f.step = new_step
+        self.model.r.step = new_step
+
+    @property
+    def image_summaries(self):
+        img_summaries_f = self.model.f.image_summaries
+        img_summaries_r = self.model.r.image_summaries
+        img_summaries = {}
+        for key in img_summaries_f.keys():
+            img_summaries[key + '_f'] = img_summaries_f[key]
+            img_summaries[key + '_r'] = img_summaries_r[key]
+        return img_summaries
+
+    def generate(self, mode=True):
+        for module in self.model.children():
+            if hasattr(module, "generate") and callable(module.generate):
+                module.generate(mode)
+        return self
+
+    def weight_costs(self):
+        return [cost for model in self.model.children() for cost in model.weight_costs()]
+
+    def parameter_count(self):
+        return sum(model.parameter_count() for model in self.model.children())
+
+    def forward(self, src, tgt, src_mask, tgt_mask, tgt_r, tgt_mask_r):
+        output_logits_f = self.model.f(src, tgt, src_mask, tgt_mask)
+        output_logits_r = self.model.r(src, tgt_r, src_mask, tgt_mask_r)
+        return output_logits_f, output_logits_r
+
+    def reconstruction_loss(
+            self,
+            seq_logits_f, target_seqs_f, mask_f,
+            seq_logits_r, target_seqs_r, mask_r,
+    ):
+        losses_f = self.model.f.reconstruction_loss(
+            seq_logits_f, target_seqs_f, mask_f
+        )
+        losses_r = self.model.r.reconstruction_loss(
+            seq_logits_r, target_seqs_r, mask_r
+        )
+        return comb_losses(losses_f, losses_r)
+
+    def calculate_loss(self, *args):
+        losses_f = self.model.f.calculate_loss(*args[:len(args)//2])
+        losses_r = self.model.r.calculate_loss(*args[len(args)//2:])
+        return comb_losses(losses_f, losses_r)
