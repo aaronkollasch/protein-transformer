@@ -90,10 +90,25 @@ def subsequent_mask(size):
 
 
 def make_std_mask(src, tgt, l_dim=1, c_dim=2):
-    src_mask = (src.sum(c_dim) != 0).unsqueeze(l_dim) if src is not None else None
-    tgt_mask = (tgt.sum(c_dim) != 0).unsqueeze(l_dim)
-    tgt_mask = tgt_mask & subsequent_mask(tgt.size(l_dim)).type_as(tgt_mask.data)
+    src_mask = tgt_mask = None
+    if src is not None:
+        src_mask = (src.sum(c_dim) != 0).unsqueeze(l_dim)
+    if tgt is not None:
+        tgt_mask = (tgt.sum(c_dim) != 0).unsqueeze(l_dim)
+        tgt_mask = tgt_mask & subsequent_mask(tgt.size(l_dim)).type_as(tgt_mask.data)
     return src_mask, tgt_mask
+
+
+def make_1d_mask(src, l_dim=1, c_dim=2):
+    if src is not None:
+        return (src.sum(c_dim) != 0).unsqueeze(l_dim)
+
+
+def make_2d_mask(tgt, l_dim=1, c_dim=2):
+    if tgt is not None:
+        tgt_mask = (tgt.sum(c_dim) != 0).unsqueeze(l_dim)
+        tgt_mask = tgt_mask & subsequent_mask(tgt.size(l_dim)).type_as(tgt_mask.data)
+        return tgt_mask
 
 
 def clamp(x, min_val=0., max_val=1.):

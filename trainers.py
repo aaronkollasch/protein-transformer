@@ -71,6 +71,7 @@ class TransformerTrainer:
         self.loader = data_loader
 
         self.run_fr = 'fr' in model.MODEL_TYPE
+        self.bert = 'bert' in model.MODEL_TYPE
         self.optimizer_type = getattr(optim, self.params['optimizer'])
         self.logger = logger
         self.logger.trainer = self
@@ -106,30 +107,35 @@ class TransformerTrainer:
 
             try:
                 if self.run_fr:
-                    src_mask, tgt_mask = make_std_mask(batch['decoder_input'], batch['decoder_input'])
-                    _, tgt_mask_r = make_std_mask(None, batch['decoder_input_r'])
                     output_logits_f, output_logits_r = self.model(
                         batch['decoder_input'], batch['decoder_input'],
-                        src_mask, tgt_mask,
-                        batch['decoder_input_r'], tgt_mask_r)
+                        None, None,
+                        batch['decoder_input_r'], None)
                     losses = self.model.calculate_loss(
                         output_logits_f, batch['decoder_output'], batch['decoder_mask'], n_eff,
                         output_logits_r, batch['decoder_output_r'], batch['decoder_mask'], n_eff
                     )
+                elif self.bert:
+                    output_logits = self.model(batch['encoder_input'], batch['encoder_input'],
+                                               None, None)
+                    losses = self.model.calculate_loss(
+                        output_logits, batch['encoder_output'], batch['encoder_bert_mask'], n_eff=n_eff)
                 else:
-                    src_mask, tgt_mask = make_std_mask(batch['decoder_input'], batch['decoder_input'])
                     output_logits = self.model(batch['decoder_input'], batch['decoder_input'],
-                                               src_mask, tgt_mask)
+                                               None, None)
                     losses = self.model.calculate_loss(
                         output_logits, batch['decoder_output'], batch['decoder_mask'], n_eff=n_eff)
 
-                if step in [10, 100, 1000, 10000]:
+                if step in [1, 10, 100, 1000, 10000, 100000]:
                     print(f'step {step:6d}: '
                           f'GPU Mem Allocated: {round(torch.cuda.memory_allocated(0) / 1024 ** 3, 1)} GB, '
                           f'Cached: {round(torch.cuda.memory_cached(0) / 1024 ** 3, 1)} GB',
                           flush=True)
             except RuntimeError as e:
-                print("out of memory at ", step, "with input size", batch['decoder_input'].shape, flush=True)
+                if self.bert:
+                    print("out of memory at ", step, "with input size", batch['encoder_input'].shape, flush=True)
+                else:
+                    print("out of memory at ", step, "with input size", batch['decoder_input'].shape, flush=True)
                 raise e
 
             self.optimizer.zero_grad()

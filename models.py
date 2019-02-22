@@ -9,6 +9,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from utils import recursive_update, comb_losses
+from functions import make_std_mask, make_1d_mask, make_2d_mask
 import layers
 
 
@@ -159,6 +160,10 @@ class Transformer(BaseModel):
         :param tgt_mask: tensor(batch, tgt_length, 1)
         :return:
         """
+        if src_mask is None:
+            src_mask = make_1d_mask(src)
+        if tgt_mask is None:
+            tgt_mask = make_2d_mask(tgt)
         return self.h_to_out(self.decode(self.encode(src, src_mask), src_mask, tgt, tgt_mask))
 
     def encode(self, src, src_mask):
@@ -342,9 +347,11 @@ class TransformerDecoder(BaseModel):
         :param src: tensor(batch, src_length, in_channels) or None
         :param tgt: tensor(batch, tgt_length, out_channels)
         :param src_mask: tensor(batch, src_length, 1) or None
-        :param tgt_mask: tensor(batch, tgt_length, 1)
+        :param tgt_mask: tensor(batch, tgt_length, 1) or None
         :return:
         """
+        if tgt_mask is None:
+            tgt_mask = make_2d_mask(tgt)
         return self.h_to_out(self.decode(None, None, tgt, tgt_mask))
 
     def decode(self, memory, src_mask, tgt, tgt_mask):
@@ -493,3 +500,20 @@ class TransformerDecoderFR(nn.Module):
         losses_f = self.model.f.calculate_loss(*args[:len(args)//2])
         losses_r = self.model.r.calculate_loss(*args[len(args)//2:])
         return comb_losses(losses_f, losses_r)
+
+
+class UnconditionedBERT(TransformerDecoder):
+    MODEL_TYPE = 'bert_transformer_decoder'
+
+    def forward(self, src, tgt, src_mask, tgt_mask):
+        """
+        :param src: tensor(batch, src_length, in_channels) or None
+        :param tgt: tensor(batch, tgt_length, out_channels)
+        :param src_mask: tensor(batch, src_length, 1) or None
+        :param tgt_mask: tensor(batch, tgt_length, 1) or None
+        :return:
+        """
+        if tgt_mask is None:
+            tgt_mask = make_1d_mask(tgt)
+        return self.h_to_out(self.decode(None, None, tgt, tgt_mask))
+

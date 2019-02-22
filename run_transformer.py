@@ -17,7 +17,9 @@ from utils import get_cuda_version, get_cudnn_version
 working_dir = '/n/groups/marks/users/aaron/transformer'
 data_dir = '/n/groups/marks/projects/autoregressive'
 
-parser = argparse.ArgumentParser(description="Train an autoregressive model on a collection of sequences.")
+parser = argparse.ArgumentParser(description="Train a transformer model on a collection of sequences.")
+parser.add_argument("--model-type", type=str, default='transformer',
+                    help="Choose model type")
 parser.add_argument("--preset", type=str, default=None,
                     help="Choose hyperparameter preset")
 parser.add_argument("--d-model", metavar='D', type=int, default=512,
@@ -28,11 +30,9 @@ parser.add_argument("--num-heads", type=int, default=8,
                     help="Number of attention heads.")
 parser.add_argument("--num-layers", type=int, default=6,
                     help="Number of layers.")
-parser.add_argument("--fr", "--run-fr", action='store_true',
-                    help="Run forward and reverse")
 parser.add_argument("--batch-size", metavar='N', type=int, default=10,
                     help="Batch size.")
-parser.add_argument("--num-iterations", type=int, default=500005,
+parser.add_argument("--num-iterations", type=int, default=250005,
                     help="Number of iterations to run the model.")
 parser.add_argument("--dataset",  metavar='D', type=str, default=None,
                     help="Dataset name for fitting model. Alignment weights must be computed beforehand.")
@@ -53,13 +53,13 @@ args = parser.parse_args()
 if args.preset == 'small':
     args.d_model = 128
     args.d_ff = 512
-    args.num_heads = 8
-    args.num_layers = 4
+    args.num_heads = 4
+    args.num_layers = 6
 elif args.preset == 'medium':
     args.d_model = 256
     args.d_ff = 1024
     args.num_heads = 8
-    args.num_layers = 5
+    args.num_layers = 6
 elif args.preset == 'large':
     args.d_model = 512
     args.d_ff = 2048
@@ -70,12 +70,12 @@ elif args.preset is not None:
 
 if args.run_name is None:
     if args.preset is not None:
-        args.run_name = f"{args.dataset}_transformer-{args.preset}_dropout-{args.dropout_p}" \
-            f"_rseed-{args.r_seed}_start-{time.strftime('%y%b%d_%H%M', time.localtime())}"
+        args.run_name = f"{args.dataset}_{args.model_type}-{args.preset}_dropout-{args.dropout_p}" \
+            f"_rseed-{args.r_seed}_start-{time.strftime('%y%b%d-%H%M', time.localtime())}"
     else:
-        args.run_name = f"{args.dataset}_n-{args.num_layers}_h-{args.num_heads}" \
+        args.run_name = f"{args.dataset}_{args.model_type}_n-{args.num_layers}_h-{args.num_heads}" \
             f"_d-{args.d_model}_dff-{args.d_ff}_dropout-{args.dropout_p}" \
-            f"_rseed-{args.r_seed}_start-{time.strftime('%y%b%d_%H%M', time.localtime())}"
+            f"_rseed-{args.r_seed}_start-{time.strftime('%y%b%d-%H%M', time.localtime())}"
 
 restore_args = " \\\n  ".join(sys.argv[1:])
 if "--run-name" not in restore_args:
@@ -126,25 +126,34 @@ print()
 
 print("Run:", args.run_name)
 
+fr = False
+bert = False
+if args.model_type == 'transformer-fr':
+    model_type = models.TransformerDecoderFR
+    fr = True
+elif args.model_type == 'BERT':
+    model_type = models.UnconditionedBERT
+    bert = True
+else:
+    model_type = models.TransformerDecoder
+
 dataset = data_loaders.SingleFamilyDataset(
     batch_size=args.batch_size,
     working_dir=data_dir,
     dataset=args.dataset,
-    matching=args.fr,
+    matching=fr,
     unlimited_epoch=True,
     output_shape='NLC',
+    output_types='encoder' if bert else 'decoder',
 )
+if bert:
+    dataset = data_loaders.BertPreprocessorDataset(dataset)
 loader = data_loaders.GeneratorDataLoader(
     dataset,
     num_workers=args.num_data_workers,
     pin_memory=True,
     worker_init_fn=_init_fn
 )
-
-if args.fr:
-    model_type = models.TransformerDecoderFR
-else:
-    model_type = models.TransformerDecoder
 
 if args.restore is not None:
     print("Restoring model from:", args.restore)
@@ -156,6 +165,10 @@ if args.restore is not None:
 else:
     checkpoint = args.restore
     trainer_params = None
+    dims = {
+        'input': len(dataset.alphabet),
+        'alphabet': len(dataset.output_alphabet),
+    }
     hyperparams = {
         'transformer': {
             'd_model': args.d_model,
@@ -165,7 +178,7 @@ else:
             'dropout_p': args.dropout_p,
         }
     }
-    model = model_type(hyperparams=hyperparams)
+    model = model_type(dims=dims, hyperparams=hyperparams)
 model.to(device)
 
 trainer = trainers.TransformerTrainer(
@@ -193,8 +206,10 @@ if args.restore is not None:
 print()
 print("Model:", model_type.__name__)
 print("Hyperparameters:", json.dumps(model.hyperparams, indent=4))
+print("Trainer:", trainer.__class__.__name__)
 print("Training parameters:", json.dumps(
     {key: value for key, value in trainer.params.items() if key != 'snapshot_exec_template'}, indent=4))
+print("Dataset:", dataset.__class__.__name__)
 print("Dataset parameters:", json.dumps(dataset.params, indent=4))
 print("Num trainable parameters:", model.parameter_count())
 print()
