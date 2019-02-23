@@ -9,7 +9,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 import torch.utils.data
 
-from data_loaders import GeneratorDataLoader, IPITrainTestDataset
+from data_loaders import GeneratorDataLoader, GeneratorDataset, TrainTestDataset, IPITrainTestDataset
 from model_logging import Logger
 from functions import NoamOpt, make_std_mask
 
@@ -164,7 +164,7 @@ class TransformerTrainer:
             #     losses['loss'], losses['ce_loss'], losses['bitperchar']), flush=True)
 
     def validate(self):
-        if not isinstance(self.loader.dataset, IPITrainTestDataset):
+        if not isinstance(self.loader.dataset, TrainTestDataset) and isinstance(self.loader.dataset, GeneratorDataset):
             return None
         self.model.eval()
         self.loader.dataset.test()
@@ -213,9 +213,11 @@ class TransformerTrainer:
         self.loader.dataset.unlimited_epoch = True
         return losses, accuracies, true_outputs, logits, roc_scores
 
-    def test(self, data_loader, model_eval=True, num_samples=1):  # TODO implement
+    def test(self, data_loader, model_eval=True, num_samples=1):
         if model_eval:
             self.model.eval()
+        if isinstance(data_loader.dataset, TrainTestDataset):
+            data_loader.dataset.test()
 
         print('sample    step  step-t  CE-loss     bit-per-char', flush=True)
         output = {
@@ -240,8 +242,8 @@ class TransformerTrainer:
                 'sequence': []
             }
             if not self.run_fr:
-                del output['forward']
-                del output['reverse']
+                del output_i['forward']
+                del output_i['reverse']
 
             for i_batch, batch in enumerate(data_loader):
                 start = time.time()
@@ -251,34 +253,44 @@ class TransformerTrainer:
 
                 with torch.no_grad():
                     if self.run_fr:
-                        src_mask, tgt_mask = make_std_mask(batch['decoder_input'], batch['decoder_input'])
-                        _, tgt_mask_r = make_std_mask(None, batch['decoder_input_r'])
                         output_logits_f, output_logits_r = self.model(
                             batch['decoder_input'], batch['decoder_input'],
-                            src_mask, tgt_mask,
-                            batch['decoder_input_r'], tgt_mask_r)
+                            None, None,
+                            batch['decoder_input_r'], None)
                         losses = self.model.reconstruction_loss(
                             output_logits_f, batch['decoder_output'], batch['decoder_mask'],
                             output_logits_r, batch['decoder_output_r'], batch['decoder_mask']
                         )
+                    elif self.bert:
+                        output_logits = self.model(batch['encoder_input'], batch['encoder_input'],
+                                                   None, None)
+                        losses = self.model.reconstruction_loss(
+                            output_logits, batch['encoder_output'], batch['encoder_mask'])
                     else:
-                        src_mask, tgt_mask = make_std_mask(batch['decoder_input'], batch['decoder_input'])
                         output_logits = self.model(batch['decoder_input'], batch['decoder_input'],
-                                                   src_mask, tgt_mask)
+                                                   None, None)
                         losses = self.model.reconstruction_loss(
                             output_logits, batch['decoder_output'], batch['decoder_mask'])
 
-                    ce_loss_per_seq = losses['ce_loss_per_seq'].cpu()
+                    ce_loss = losses['ce_loss_per_seq'].cpu()
                     bitperchar_per_seq = losses['bitperchar_per_seq'].cpu()
 
                     if self.run_fr:
-                        ce_loss_per_seq = ce_loss_per_seq.mean(0)
+                        ce_loss_per_seq = ce_loss.mean(0)
                         bitperchar_per_seq = bitperchar_per_seq.mean(0)
+                    else:
+                        ce_loss_per_seq = ce_loss
 
                 output_i['name'].extend(batch['names'])
                 output_i['sequence'].extend(batch['sequences'])
                 output_i['mean'].extend(ce_loss_per_seq.numpy())
                 output_i['bitperchar'].extend(bitperchar_per_seq.numpy())
+
+                if self.run_fr:
+                    ce_loss_f = ce_loss[0]
+                    ce_loss_r = ce_loss[1]
+                    output_i['forward'].extend(ce_loss_f.numpy())
+                    output_i['reverse'].extend(ce_loss_r.numpy())
 
                 print("{: 4d} {: 8d} {:6.3f} {:11.6f} {:11.6f}".format(
                     i_iter, i_batch, time.time()-start, ce_loss_per_seq.mean(), bitperchar_per_seq.mean()),
@@ -289,10 +301,20 @@ class TransformerTrainer:
             output['bitperchar'].append(output_i['bitperchar'])
             output['mean'].append(output_i['mean'])
 
+            if self.run_fr:
+                output['forward'].append(output_i['forward'])
+                output['reverse'].append(output_i['reverse'])
+
         output['bitperchar'] = np.array(output['bitperchar']).mean(0)
         output['mean'] = np.array(output['mean']).mean(0)
 
+        if self.run_fr:
+            output['forward'] = np.array(output['forward']).mean(0)
+            output['reverse'] = np.array(output['reverse']).mean(0)
+
         self.model.train()
+        if isinstance(data_loader.dataset, TrainTestDataset):
+            data_loader.dataset.train()
         return output
 
     def save_state(self, last_batch=None):

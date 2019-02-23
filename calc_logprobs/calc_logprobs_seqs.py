@@ -13,6 +13,8 @@ import trainers
 import data_loaders
 
 parser = argparse.ArgumentParser(description="Calculate the log probability of mutated sequences.")
+parser.add_argument("--model-type", type=str, default='transformer',
+                    help="Choose model type")
 parser.add_argument("--restore", type=str, default='', required=True,
                     help="Snapshot name for restoring the model")
 parser.add_argument("--input", type=str, default='', required=True,
@@ -46,14 +48,28 @@ if device.type == 'cuda':
     print('Cached:   ', round(torch.cuda.memory_cached(0)/1024**3, 1), 'GB')
 print()
 
+fr = False
+bert = False
+if args.model_type == 'transformer-fr':
+    model_type = models.TransformerDecoderFR
+    fr = True
+elif args.model_type == 'BERT':
+    model_type = models.UnconditionedBERT
+    bert = True
+else:
+    model_type = models.TransformerDecoder
+
 dataset = data_loaders.FastaDataset(
     batch_size=args.batch_size,
     working_dir='.',
     dataset=args.input,
-    matching=True,
+    matching=fr,
     unlimited_epoch=False,
     output_shape='NLC',
+    output_types='encoder' if bert else 'decoder',
 )
+if bert:
+    dataset = data_loaders.BERTPreprocessorDataset(dataset)
 loader = data_loaders.GeneratorDataLoader(
     dataset,
     num_workers=args.num_data_workers,
@@ -66,7 +82,7 @@ checkpoint = torch.load(os.path.join('../snapshots', args.restore), map_location
 dims = checkpoint['model_dims']
 hyperparams = checkpoint['model_hyperparams']
 hyperparams['transformer']['dropout_p'] = args.dropout_p
-model = models.TransformerDecoder(dims=dims, hyperparams=hyperparams)
+model = model_type(dims=dims, hyperparams=hyperparams)
 model.load_state_dict(checkpoint['model_state_dict'])
 model.to(device)
 print("Num parameters:", model.parameter_count())

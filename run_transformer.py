@@ -4,6 +4,7 @@ import argparse
 import time
 import json
 import warnings
+import hashlib
 
 import numpy as np
 import torch
@@ -50,17 +51,17 @@ parser.add_argument("--no-cuda", action='store_true',
                     help="Disable GPU training")
 args = parser.parse_args()
 
-if args.preset == 'small':
+if args.preset in ['small', 'S']:
     args.d_model = 128
     args.d_ff = 512
     args.num_heads = 4
     args.num_layers = 6
-elif args.preset == 'medium':
+elif args.preset in ['medium', 'M']:
     args.d_model = 256
     args.d_ff = 1024
     args.num_heads = 8
     args.num_layers = 6
-elif args.preset == 'large':
+elif args.preset in ['large', 'L']:
     args.d_model = 512
     args.d_ff = 2048
     args.num_heads = 8
@@ -98,6 +99,11 @@ srun stdbuf -oL -eL {sys.executable} \\
   {restore_args} \\
   --restore {{restore}}
 """
+
+if args.restore is not None:
+    # prevent from repeating batches when restoring at intermediate point
+    args.r_seed += int(hashlib.sha1(args.restore.encode()).hexdigest(), 16)
+    args.r_seed = args.r_seed % (2 ** 32 - 1)  # limit of np.random.seed
 
 torch.manual_seed(args.r_seed)
 torch.cuda.manual_seed_all(args.r_seed)
@@ -147,7 +153,7 @@ dataset = data_loaders.SingleFamilyDataset(
     output_types='encoder' if bert else 'decoder',
 )
 if bert:
-    dataset = data_loaders.BertPreprocessorDataset(dataset)
+    dataset = data_loaders.BERTPreprocessorDataset(dataset)
 loader = data_loaders.GeneratorDataLoader(
     dataset,
     num_workers=args.num_data_workers,

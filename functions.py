@@ -83,10 +83,10 @@ def comb_losses(losses_f, losses_r):
 
 
 def subsequent_mask(size):
-    "Mask out subsequent positions."
+    """Mask out subsequent positions."""
     attn_shape = (1, size, size)
-    subsequent_mask = np.triu(np.ones(attn_shape), k=1).astype('uint8')
-    return torch.as_tensor(subsequent_mask) == 0
+    mask = np.triu(np.ones(attn_shape), k=1).astype('uint8')
+    return torch.as_tensor(mask) == 0
 
 
 def make_std_mask(src, tgt, l_dim=1, c_dim=2):

@@ -9,7 +9,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from utils import recursive_update, comb_losses
-from functions import make_std_mask, make_1d_mask, make_2d_mask
+from functions import make_1d_mask, make_2d_mask
 import layers
 
 
@@ -516,4 +516,3 @@ class UnconditionedBERT(TransformerDecoder):
         if tgt_mask is None:
             tgt_mask = make_1d_mask(tgt)
         return self.h_to_out(self.decode(None, None, tgt, tgt_mask))
-

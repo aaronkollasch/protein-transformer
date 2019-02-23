@@ -1116,7 +1116,7 @@ class VHClusteredAntibodyDataset(VHAntibodyDataset):
         return batch
 
 
-class BertPreprocessorDataset(SequenceDataset, TrainTestDataset):
+class BERTPreprocessorDataset(SequenceDataset, TrainTestDataset):
     """Wraps a SequenceDataset"""
     ADDITIONAL_CHARS = 'm'
     MASK_CHAR = 'm'
@@ -1175,14 +1175,13 @@ class BertPreprocessorDataset(SequenceDataset, TrainTestDataset):
 
     def __getitem__(self, index):
         batch = self.dataset.__getitem__(index)
-        if self._training:
-            for key in self.KEYS_TO_MASK:
-                if key not in batch:
-                    continue
-                keys = self.KEYS_TO_MASK[key]
-                if keys[1] is not None:
-                    batch[keys[1]] = batch[key]
-                batch[keys[2]], batch[keys[3]] = self.mask_tensor(batch[key], batch[keys[0]])
+        for key in self.KEYS_TO_MASK:
+            if key not in batch:
+                continue
+            keys = self.KEYS_TO_MASK[key]
+            if keys[1] is not None:
+                batch[keys[1]] = batch[key]
+            batch[keys[2]], batch[keys[3]] = self.mask_tensor(batch[key], batch[keys[0]])
         return batch
 
     def mask_tensor(self, x, mask, mask_char=MASK_CHAR):
@@ -1198,26 +1197,31 @@ class BertPreprocessorDataset(SequenceDataset, TrainTestDataset):
             torch.tensor([1 - self.mask_freq]),
             torch.tensor(self.mask_proportion) * self.mask_freq
         ])
-        bert_mask = dist.Categorical(proportions).sample(mask_shape)
-        onehot_map = torch.eye(len(self.alphabet))
 
-        # mask when mask == 1
-        mask_onehot = onehot_map[self.aa_dict[mask_char]]
-        mask_onehot = mask_onehot.expand((bert_mask == 1).sum(), len(self.alphabet))
-        x.masked_scatter_(bert_mask == 1, mask_onehot)
+        if self._training:
+            bert_mask = dist.Categorical(proportions).sample(mask_shape)
+            onehot_map = torch.eye(len(self.alphabet))
 
-        # randomize when mask == 2
-        randomize_alphabet = self.dataset.alphabet
-        randomize_alphabet_proportions = torch.tensor([
-            1/len(randomize_alphabet) if char in randomize_alphabet else 0
-            for char in self.alphabet
-        ])
-        randomized_chars = dist.Categorical(randomize_alphabet_proportions).sample([(bert_mask == 2).sum()])
-        randomized_onehot = onehot_map[randomized_chars]
-        x.masked_scatter_(bert_mask == 2, randomized_onehot)
+            # mask when mask == 1
+            mask_onehot = onehot_map[self.aa_dict[mask_char]]
+            mask_onehot = mask_onehot.expand((bert_mask == 1).sum(), len(self.alphabet))
+            x.masked_scatter_(bert_mask == 1, mask_onehot)
+
+            # randomize when mask == 2
+            randomize_alphabet = self.dataset.alphabet
+            randomize_alphabet_proportions = torch.tensor([
+                1/len(randomize_alphabet) if char in randomize_alphabet else 0
+                for char in self.alphabet
+            ])
+            randomized_chars = dist.Categorical(randomize_alphabet_proportions).sample([(bert_mask == 2).sum()])
+            randomized_onehot = onehot_map[randomized_chars]
+            x.masked_scatter_(bert_mask == 2, randomized_onehot)
+
+            bert_mask = (bert_mask != 0).float() * mask
+        else:
+            bert_mask = mask
 
         x = x * mask
-        bert_mask = (bert_mask != 0).float() * mask
         return x, bert_mask
 
     def __len__(self):
