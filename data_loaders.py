@@ -175,10 +175,13 @@ class SequenceDataset(GeneratorDataset):
         self.reverse = reverse
         self.matching = matching
         self.output_shape = output_shape
-        self.output_types =  output_types
+        self.output_types = output_types
 
         if output_shape not in self.SUPPORTED_OUTPUT_SHAPES:
             raise KeyError(f'Unsupported output shape: {output_shape}')
+
+        self.aa_dict = self.idx_to_aa = self.output_aa_dict = self.output_idx_to_aa = None
+        self.update_aa_dict()
 
     @property
     def params(self):
@@ -197,6 +200,7 @@ class SequenceDataset(GeneratorDataset):
         GeneratorDataset.params.__set__(self, d)
         if 'alphabet_type' in d:
             self.alphabet_type = d['alphabet_type']
+            self.update_aa_dict()
         if 'reverse' in d:
             self.reverse = d['reverse']
         if 'matching' in d:
@@ -219,21 +223,11 @@ class SequenceDataset(GeneratorDataset):
     def output_alphabet(self):
         return self.alphabet
 
-    @property
-    def aa_dict(self):
-        return {aa: i for i, aa in enumerate(self.alphabet)}
-
-    @property
-    def idx_to_aa(self):
-        return {i: aa for i, aa in enumerate(self.alphabet)}
-
-    @property
-    def output_aa_dict(self):
-        return {aa: i for i, aa in enumerate(self.output_alphabet)}
-
-    @property
-    def output_idx_to_aa(self):
-        return {i: aa for i, aa in enumerate(self.output_alphabet)}
+    def update_aa_dict(self):
+        self.aa_dict = {aa: i for i, aa in enumerate(self.alphabet)}
+        self.idx_to_aa = {i: aa for i, aa in enumerate(self.alphabet)}
+        self.output_aa_dict = {aa: i for i, aa in enumerate(self.output_alphabet)}
+        self.output_idx_to_aa = {i: aa for i, aa in enumerate(self.output_alphabet)}
 
     @property
     def n_eff(self):
@@ -1132,9 +1126,9 @@ class BERTPreprocessorDataset(SequenceDataset, TrainTestDataset):
             mask_freq=0.15,
             mask_proportion=(0.8, 0.1, 0.1),  # mask, random, keep
     ):
+        self.dataset = dataset
         SequenceDataset.__init__(self)
         TrainTestDataset.__init__(self)
-        self.dataset = dataset
         self.params = self.dataset.params
         self.mask_freq = mask_freq
         self.mask_proportion = mask_proportion
@@ -1208,7 +1202,7 @@ class BERTPreprocessorDataset(SequenceDataset, TrainTestDataset):
             x.masked_scatter_(bert_mask == 1, mask_onehot)
 
             # randomize when mask == 2
-            randomize_alphabet = self.dataset.alphabet
+            randomize_alphabet = self.dataset.alphabet.replace('*', '')
             randomize_alphabet_proportions = torch.tensor([
                 1/len(randomize_alphabet) if char in randomize_alphabet else 0
                 for char in self.alphabet
@@ -1219,7 +1213,7 @@ class BERTPreprocessorDataset(SequenceDataset, TrainTestDataset):
 
             bert_mask = (bert_mask != 0).float() * mask
         else:
-            bert_mask = mask
+            bert_mask = torch.zeros_like(mask)
 
         x = x * mask
         return x, bert_mask

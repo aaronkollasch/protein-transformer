@@ -51,17 +51,17 @@ parser.add_argument("--no-cuda", action='store_true',
                     help="Disable GPU training")
 args = parser.parse_args()
 
-if args.preset in ['small', 'S']:
+if 'small' in args.preset:
     args.d_model = 128
     args.d_ff = 512
     args.num_heads = 4
     args.num_layers = 6
-elif args.preset in ['medium', 'M']:
+elif 'medium' in args.preset:
     args.d_model = 256
     args.d_ff = 1024
     args.num_heads = 8
     args.num_layers = 6
-elif args.preset in ['large', 'L']:
+elif 'large' in args.preset:
     args.d_model = 512
     args.d_ff = 2048
     args.num_heads = 8
@@ -80,7 +80,7 @@ if args.run_name is None:
 
 restore_args = " \\\n  ".join(sys.argv[1:])
 if "--run-name" not in restore_args:
-    restore_args += f" \\\n --run-name {args.run_name}"
+    restore_args += f" \\\n  --run-name {args.run_name}"
 
 sbatch_executable = f"""#!/bin/bash
 #SBATCH -c 4                               # Request one core
@@ -134,12 +134,25 @@ print("Run:", args.run_name)
 
 fr = False
 bert = False
+bert_mask_freq = 0.15
+bert_mask_proportion = (0.8, 0.1, 0.1)  # mask, random, keep
+bert_mask_type = 'seq,bert'
 if args.model_type == 'transformer-fr':
     model_type = models.TransformerDecoderFR
     fr = True
 elif args.model_type == 'BERT':
     model_type = models.UnconditionedBERT
     bert = True
+    if 'nokeep' in args.preset:
+        bert_mask_freq = 0.15
+        bert_mask_proportion = (0.8, 0.2, 0.0)
+    elif 'allrandom' in args.preset:
+        bert_mask_freq = 0.1
+        bert_mask_proportion = (0.0, 1.0, 0.0)
+    elif 'allkeep' in args.preset:
+        bert_mask_freq = 0.15
+        bert_mask_proportion = (0.0, 0.0, 1.0)
+        bert_mask_type = 'seq,bert,diag'
 else:
     model_type = models.TransformerDecoder
 
@@ -153,7 +166,11 @@ dataset = data_loaders.SingleFamilyDataset(
     output_types='encoder' if bert else 'decoder',
 )
 if bert:
-    dataset = data_loaders.BERTPreprocessorDataset(dataset)
+    dataset = data_loaders.BERTPreprocessorDataset(
+        dataset,
+        mask_freq=bert_mask_freq,
+        mask_proportion=bert_mask_proportion,
+    )
 loader = data_loaders.GeneratorDataLoader(
     dataset,
     num_workers=args.num_data_workers,
@@ -184,6 +201,11 @@ else:
             'dropout_p': args.dropout_p,
         }
     }
+    if bert:
+        hyperparams['optimization'] = {
+            'lr_factor': 2. / bert_mask_freq,
+            'bert_mask_type': bert_mask_type
+        }
     model = model_type(dims=dims, hyperparams=hyperparams)
 model.to(device)
 

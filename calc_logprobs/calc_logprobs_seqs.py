@@ -13,8 +13,6 @@ import trainers
 import data_loaders
 
 parser = argparse.ArgumentParser(description="Calculate the log probability of mutated sequences.")
-parser.add_argument("--model-type", type=str, default='transformer',
-                    help="Choose model type")
 parser.add_argument("--restore", type=str, default='', required=True,
                     help="Snapshot name for restoring the model")
 parser.add_argument("--input", type=str, default='', required=True,
@@ -48,17 +46,21 @@ if device.type == 'cuda':
     print('Cached:   ', round(torch.cuda.memory_cached(0)/1024**3, 1), 'GB')
 print()
 
+print("Loading checkpoint")
+checkpoint = torch.load(os.path.join('../snapshots', args.restore), map_location='cpu')
+
 fr = False
 bert = False
-if args.model_type == 'transformer-fr':
+if checkpoint['model_type'] == 'transformer_decoder_fr':
     model_type = models.TransformerDecoderFR
     fr = True
-elif args.model_type == 'BERT':
+elif checkpoint['model_type'] == 'bert_transformer_decoder':
     model_type = models.UnconditionedBERT
     bert = True
 else:
     model_type = models.TransformerDecoder
 
+print("Reading test data")
 dataset = data_loaders.FastaDataset(
     batch_size=args.batch_size,
     working_dir='.',
@@ -70,15 +72,14 @@ dataset = data_loaders.FastaDataset(
 )
 if bert:
     dataset = data_loaders.BERTPreprocessorDataset(dataset)
+    # dataset.params = checkpoint['dataset_params']  # not needed since randomization disabled in testing
 loader = data_loaders.GeneratorDataLoader(
     dataset,
     num_workers=args.num_data_workers,
     pin_memory=True,
 )
-print("Read in test data")
 
-print("Initializing and loading variables")
-checkpoint = torch.load(os.path.join('../snapshots', args.restore), map_location='cpu')
+print("Initializing model")
 dims = checkpoint['model_dims']
 hyperparams = checkpoint['model_hyperparams']
 hyperparams['transformer']['dropout_p'] = args.dropout_p

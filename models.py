@@ -21,7 +21,7 @@ class BaseModel(nn.Module):
             "alphabet": 21,
             "length": 256
         }
-    DEFAULT_PARAMS = {}
+    DEFAULT_PARAMS: Dict[str, Dict[str, Union[int, bool, float, str, Sequence]]] = {}
 
     def __init__(self, dims=None, hyperparams=None):
         nn.Module.__init__(self)
@@ -246,7 +246,7 @@ class Transformer(BaseModel):
 
 class TransformerDecoder(BaseModel):
     MODEL_TYPE = 'transformer_decoder'
-    DEFAULT_PARAMS = {
+    DEFAULT_PARAMS: Dict[str, Dict[str, Union[int, bool, float, str, Sequence]]] = {
             'transformer': {
                 'd_model': 512,
                 'd_ff': 2048,
@@ -393,7 +393,8 @@ class TransformerDecoder(BaseModel):
             seq_logits, target_seqs, mask
         )
         if reg_params['label_smoothing']:
-            loss_per_seq = self.criterion(reconstruction_loss['seq_reconstruct'], target_seqs).sum([1, 2])
+            loss_per_seq = self.criterion(reconstruction_loss['seq_reconstruct'], target_seqs) * mask
+            loss_per_seq = loss_per_seq.sum([1, 2])
             loss = loss_per_seq.mean()
         else:
             loss_per_seq = reconstruction_loss['ce_loss_per_seq']
@@ -504,6 +505,9 @@ class TransformerDecoderFR(nn.Module):
 
 class UnconditionedBERT(TransformerDecoder):
     MODEL_TYPE = 'bert_transformer_decoder'
+    DEFAULT_PARAMS: Dict[str, Dict[str, Union[int, bool, float, str, Sequence]]] = \
+        deepcopy(TransformerDecoder.DEFAULT_PARAMS)
+    DEFAULT_PARAMS['optimization']['bert_mask_type'] = 'seq,bert'  # seq, bert, diag
 
     def forward(self, src, tgt, src_mask, tgt_mask):
         """

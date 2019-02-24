@@ -9,9 +9,9 @@ import torch.nn.functional as F
 import torch.optim as optim
 import torch.utils.data
 
-from data_loaders import GeneratorDataLoader, GeneratorDataset, TrainTestDataset, IPITrainTestDataset
+from data_loaders import GeneratorDataLoader, TrainTestDataset, IPITrainTestDataset
 from model_logging import Logger
-from functions import NoamOpt, make_std_mask
+from functions import NoamOpt, make_1d_to_2d_mask
 
 
 class TransformerTrainer:
@@ -116,8 +116,19 @@ class TransformerTrainer:
                         output_logits_r, batch['decoder_output_r'], batch['decoder_mask'], n_eff
                     )
                 elif self.bert:
+                    if 'bert' in self.params['bert_mask_type']:
+                        bert_attention_1d_mask = ((1-batch['encoder_bert_mask']) * batch['encoder_mask']).byte()
+                        bert_attention_2d_mask = make_1d_to_2d_mask(
+                            bert_attention_1d_mask,
+                            mask_diag='diag' in self.params['bert_mask_type']
+                        )
+                    elif 'diag' in self.params['bert_mask_type']:
+                        bert_attention_1d_mask = batch['encoder_mask'].byte()
+                        bert_attention_2d_mask = make_1d_to_2d_mask(bert_attention_1d_mask, mask_diag=True)
+                    else:
+                        bert_attention_1d_mask = bert_attention_2d_mask = None
                     output_logits = self.model(batch['encoder_input'], batch['encoder_input'],
-                                               None, None)
+                                               bert_attention_1d_mask, bert_attention_2d_mask)
                     losses = self.model.calculate_loss(
                         output_logits, batch['encoder_output'], batch['encoder_bert_mask'], n_eff=n_eff)
                 else:
@@ -127,10 +138,13 @@ class TransformerTrainer:
                         output_logits, batch['decoder_output'], batch['decoder_mask'], n_eff=n_eff)
 
                 if step in [1, 10, 100, 1000, 10000, 100000]:
-                    print(f'step {step:6d}: '
-                          f'GPU Mem Allocated: {round(torch.cuda.memory_allocated(0) / 1024 ** 3, 1)} GB, '
-                          f'Cached: {round(torch.cuda.memory_cached(0) / 1024 ** 3, 1)} GB',
-                          flush=True)
+                    try:
+                        print(f'step {step:6d}: '
+                              f'GPU Mem Allocated: {round(torch.cuda.memory_allocated(0) / 1024 ** 3, 1)} GB, '
+                              f'Cached: {round(torch.cuda.memory_cached(0) / 1024 ** 3, 1)} GB',
+                              flush=True)
+                    except AttributeError:
+                        pass
             except RuntimeError as e:
                 if self.bert:
                     print("out of memory at ", step, "with input size", batch['encoder_input'].shape, flush=True)
@@ -154,7 +168,8 @@ class TransformerTrainer:
                     losses[key] /= 2
             losses.update({'grad_norm': total_norm})
 
-            if step % self.params['snapshot_interval'] == 0:
+            if step in [10000, 25000, 50000, 100000, 250000, 500000, 1000000, 1500000, 2000000, 2500000] or \
+                    step % self.params['snapshot_interval'] == 0:
                 if self.params['snapshot_path'] is not None:
                     self.save_state()
 
@@ -164,7 +179,7 @@ class TransformerTrainer:
             #     losses['loss'], losses['ce_loss'], losses['bitperchar']), flush=True)
 
     def validate(self):
-        if not isinstance(self.loader.dataset, TrainTestDataset) and isinstance(self.loader.dataset, GeneratorDataset):
+        if not isinstance(self.loader.dataset, IPITrainTestDataset):
             return None
         self.model.eval()
         self.loader.dataset.test()
@@ -355,5 +370,6 @@ class TransformerTrainer:
             print("Warning: model hyperparameter mismatch")
         self.model.load_state_dict(checkpoint['model_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        self.optimizer._step = checkpoint['step']
         self.model.step = checkpoint['step']
         self.params.update(checkpoint['train_params'])

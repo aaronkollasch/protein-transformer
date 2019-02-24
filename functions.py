@@ -86,7 +86,12 @@ def subsequent_mask(size):
     """Mask out subsequent positions."""
     attn_shape = (1, size, size)
     mask = np.triu(np.ones(attn_shape), k=1).astype('uint8')
-    return torch.as_tensor(mask) == 0
+    return torch.as_tensor(mask) == 0  # TODO handle more shapes than NLC
+
+
+def diagonal_mask(size):
+    """Mask out subsequent positions."""
+    return torch.diag(torch.ones(size)).unsqueeze(0) == 0  # TODO handle more shapes than NLC
 
 
 def make_std_mask(src, tgt, l_dim=1, c_dim=2):
@@ -109,6 +114,13 @@ def make_2d_mask(tgt, l_dim=1, c_dim=2):
         tgt_mask = (tgt.sum(c_dim) != 0).unsqueeze(l_dim)
         tgt_mask = tgt_mask & subsequent_mask(tgt.size(l_dim)).type_as(tgt_mask.data)
         return tgt_mask
+
+
+def make_1d_to_2d_mask(mask, mask_diag=True, l_dim=1, c_dim=2):
+    if mask_diag:
+        return mask & mask.transpose(l_dim, c_dim) & diagonal_mask(mask.size(l_dim)).type_as(mask.data)
+    else:
+        return mask & mask.transpose(l_dim, c_dim)
 
 
 def clamp(x, min_val=0., max_val=1.):
@@ -202,16 +214,19 @@ class NoamOpt:
         if step is None:
             step = self._step
         return self.factor * \
-               (self.model_size ** (-0.5) *
-                min(step ** (-0.5), step * self.warmup ** (-1.5)))
+            (self.model_size ** (-0.5) *
+             min(step ** (-0.5), step * self.warmup ** (-1.5)))
 
     def zero_grad(self):
         self.optimizer.zero_grad()
 
     def state_dict(self):
-        return self.optimizer.state_dict()
+        state_dict = self.optimizer.state_dict()
+        state_dict['step'] = self._step
+        return state_dict
 
     def load_state_dict(self, state_dict):
+        self._step = state_dict.get('step', self._step)
         return self.optimizer.load_state_dict(state_dict)
 
 
