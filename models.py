@@ -1,7 +1,6 @@
 from typing import Union, Dict, Sequence
 import warnings
 from copy import deepcopy
-import itertools
 import math
 
 import torch
@@ -10,11 +9,11 @@ import torch.nn.functional as F
 
 from utils import recursive_update, comb_losses
 from functions import make_1d_mask, make_2d_mask
-import layers
+import transformer_layers
 
 
-class BaseModel(nn.Module):
-    """Abstract RNN class."""
+class Model(nn.Module):
+    """Abstract Model."""
     MODEL_TYPE = 'abstract_model'
     DEFAULT_DIMS = {
             "batch": 10,
@@ -51,7 +50,7 @@ class BaseModel(nn.Module):
         return sum(param.numel() for param in self.parameters())
 
 
-class Transformer(BaseModel):
+class Transformer(Model):
     MODEL_TYPE = 'transformer'
     DEFAULT_PARAMS = {
             'transformer': {
@@ -94,7 +93,7 @@ class Transformer(BaseModel):
         }
 
     def __init__(self, dims=None, hyperparams=None):
-        BaseModel.__init__(self, dims=dims, hyperparams=hyperparams)
+        Model.__init__(self, dims=dims, hyperparams=hyperparams)
 
         if self.hyperparams['regularization']['bayesian']:
             self.hyperparams['regularization']['l2'] = False
@@ -102,7 +101,8 @@ class Transformer(BaseModel):
             # torch built-in weight decay is more efficient than manual calculation
             self.hyperparams['optimization']['weight_decay'] = self.hyperparams['regularization']['l2_lambda']
 
-        if self.hyperparams['regularization']['prior_params'] is None:
+        if self.hyperparams['regularization']['prior_params'] is None and \
+                self.hyperparams['regularization']['bayesian']:
             if self.hyperparams['regularization']['prior_type'] == 'gaussian':
                 self.hyperparams['regularization']['prior_params'] = (0., 1.)
             elif self.hyperparams['regularization']['prior_type'] == 'scale_mix_gaussian':
@@ -118,19 +118,19 @@ class Transformer(BaseModel):
         h = params['num_heads']
         dropout = params['dropout_p']
         c = deepcopy
-        attn = layers.MultiHeadedAttention(h, d_model, dropout)
-        ff = layers.PositionwiseFeedForward(d_model, d_ff, dropout)
-        position = layers.PositionalEncoding(d_model, dropout)
+        attn = transformer_layers.MultiHeadedAttention(h, d_model, dropout)
+        ff = transformer_layers.PositionwiseFeedForward(d_model, d_ff, dropout)
+        position = transformer_layers.PositionalEncoding(d_model, dropout)
 
-        self.encoder = layers.Encoder(layers.EncoderLayer(d_model, c(attn), c(ff), dropout), n)
-        self.decoder = layers.Decoder(layers.DecoderLayer(d_model, c(attn), c(attn), c(ff), dropout), n)
-        self.src_embed = nn.Sequential(layers.Embeddings(d_model, self.dims['input']), c(position))
-        self.tgt_embed = nn.Sequential(layers.Embeddings(d_model, self.dims['input']), c(position))
+        self.encoder = transformer_layers.Encoder(transformer_layers.EncoderLayer(d_model, c(attn), c(ff), dropout), n)
+        self.decoder = transformer_layers.Decoder(transformer_layers.DecoderLayer(d_model, c(attn), c(attn), c(ff), dropout), n)
+        self.src_embed = nn.Sequential(transformer_layers.Embeddings(d_model, self.dims['input']), c(position))
+        self.tgt_embed = nn.Sequential(transformer_layers.Embeddings(d_model, self.dims['input']), c(position))
         self.h_to_out = nn.Linear(d_model, self.dims['alphabet'])
         self.reset_parameters()
 
         if self.hyperparams['regularization']['label_smoothing']:
-            self.criterion = layers.LabelSmoothing(
+            self.criterion = transformer_layers.LabelSmoothing(
                 self.dims['alphabet'],
                 smoothing=self.hyperparams['regularization']['label_smoothing_eps'],
                 reduction='none')
@@ -169,8 +169,8 @@ class Transformer(BaseModel):
     def encode(self, src, src_mask):
         return self.encoder(self.src_embed(src), src_mask)
 
-    def decode(self, memory, src_mask, tgt, tgt_mask):
-        return self.decoder(self.tgt_embed(tgt), memory, src_mask, tgt_mask)
+    def decode(self, memory, src_mask, tgt, tgt_mask, residual='all'):
+        return self.decoder(self.tgt_embed(tgt), memory, src_mask, tgt_mask, residual=residual)
 
     @staticmethod
     def reconstruction_loss(seq_logits, target_seqs, mask):
@@ -244,7 +244,7 @@ class Transformer(BaseModel):
         return output
 
 
-class TransformerDecoder(BaseModel):
+class TransformerDecoder(Model):
     MODEL_TYPE = 'transformer_decoder'
     DEFAULT_PARAMS: Dict[str, Dict[str, Union[int, bool, float, str, Sequence]]] = {
             'transformer': {
@@ -253,6 +253,7 @@ class TransformerDecoder(BaseModel):
                 'num_heads': 8,
                 'num_layers': 6,
                 'dropout_p': 0.1,
+                'mask_order': 'subsequent',  # subsequent, random
             },
             'sampler_hyperparams': {
                 'warm_up': 10000,
@@ -287,7 +288,7 @@ class TransformerDecoder(BaseModel):
         }
 
     def __init__(self, dims=None, hyperparams=None):
-        BaseModel.__init__(self, dims=dims, hyperparams=hyperparams)
+        Model.__init__(self, dims=dims, hyperparams=hyperparams)
 
         if self.hyperparams['regularization']['bayesian']:
             self.hyperparams['regularization']['l2'] = False
@@ -295,7 +296,8 @@ class TransformerDecoder(BaseModel):
             # torch built-in weight decay is more efficient than manual calculation
             self.hyperparams['optimization']['weight_decay'] = self.hyperparams['regularization']['l2_lambda']
 
-        if self.hyperparams['regularization']['prior_params'] is None:
+        if self.hyperparams['regularization']['prior_params'] is None and \
+                self.hyperparams['regularization']['bayesian']:
             if self.hyperparams['regularization']['prior_type'] == 'gaussian':
                 self.hyperparams['regularization']['prior_params'] = (0., 1.)
             elif self.hyperparams['regularization']['prior_type'] == 'scale_mix_gaussian':
@@ -311,17 +313,17 @@ class TransformerDecoder(BaseModel):
         h = params['num_heads']
         dropout = params['dropout_p']
         c = deepcopy
-        attn = layers.MultiHeadedAttention(h, d_model, dropout)
-        ff = layers.PositionwiseFeedForward(d_model, d_ff, dropout)
-        position = layers.PositionalEncoding(d_model, dropout)
+        attn = transformer_layers.MultiHeadedAttention(h, d_model, dropout)
+        ff = transformer_layers.PositionwiseFeedForward(d_model, d_ff, dropout)
+        position = transformer_layers.PositionalEncoding(d_model, dropout)
 
-        self.decoder = layers.Decoder(layers.DecoderLayer(d_model, c(attn), None, c(ff), dropout), n)
-        self.tgt_embed = nn.Sequential(layers.Embeddings(d_model, self.dims['input']), c(position))
+        self.decoder = transformer_layers.Decoder(transformer_layers.DecoderLayer(d_model, c(attn), None, c(ff), dropout), n)
+        self.tgt_embed = nn.Sequential(transformer_layers.Embeddings(d_model, self.dims['input']), c(position))
         self.h_to_out = nn.Linear(d_model, self.dims['alphabet'])
         self.reset_parameters()
 
         if self.hyperparams['regularization']['label_smoothing']:
-            self.criterion = layers.LabelSmoothing(
+            self.criterion = transformer_layers.LabelSmoothing(
                 self.dims['alphabet'],
                 smoothing=self.hyperparams['regularization']['label_smoothing_eps'],
                 reduction='none')
@@ -347,15 +349,16 @@ class TransformerDecoder(BaseModel):
         :param src: tensor(batch, src_length, in_channels) or None
         :param tgt: tensor(batch, tgt_length, out_channels)
         :param src_mask: tensor(batch, src_length, 1) or None
-        :param tgt_mask: tensor(batch, tgt_length, 1) or None
+        :param tgt_mask: tensor(batch, tgt_length, 1) or tensor(batch, tgt_length, tgt_length)
+                         or [tgt_mask] * num_layers or None
         :return:
         """
         if tgt_mask is None:
             tgt_mask = make_2d_mask(tgt)
         return self.h_to_out(self.decode(None, None, tgt, tgt_mask))
 
-    def decode(self, memory, src_mask, tgt, tgt_mask):
-        return self.decoder(self.tgt_embed(tgt), memory, src_mask, tgt_mask)
+    def decode(self, memory, src_mask, tgt, tgt_mask, residual='all'):
+        return self.decoder(self.tgt_embed(tgt), memory, src_mask, tgt_mask, residual=residual)
 
     @staticmethod
     def reconstruction_loss(seq_logits, target_seqs, mask):
@@ -507,7 +510,11 @@ class UnconditionedBERT(TransformerDecoder):
     MODEL_TYPE = 'bert_transformer_decoder'
     DEFAULT_PARAMS: Dict[str, Dict[str, Union[int, bool, float, str, Sequence]]] = \
         deepcopy(TransformerDecoder.DEFAULT_PARAMS)
-    DEFAULT_PARAMS['optimization']['bert_mask_type'] = 'seq,bert'  # seq, bert, diag
+    DEFAULT_PARAMS['bert'] = {
+        'attn_mask_type': 'seq',  # seq, bert, diag
+        'attn_mask_layer': 'all',  # all, first, first_half
+        'residual_layer': 'all',  # all, not_first, none
+    }
 
     def forward(self, src, tgt, src_mask, tgt_mask):
         """
@@ -517,6 +524,15 @@ class UnconditionedBERT(TransformerDecoder):
         :param tgt_mask: tensor(batch, tgt_length, 1) or None
         :return:
         """
+        t_params = self.hyperparams['transformer']
+        b_params = self.hyperparams['bert']
         if tgt_mask is None:
             tgt_mask = make_1d_mask(tgt)
-        return self.h_to_out(self.decode(None, None, tgt, tgt_mask))
+        elif b_params['attn_mask_layer'] == 'first':
+            default_tgt_mask = make_1d_mask(tgt)
+            tgt_mask = [tgt_mask] + [default_tgt_mask] * (t_params['num_layers']-1)
+        elif b_params['attn_mask_layer'] == 'first_half':
+            default_tgt_mask = make_1d_mask(tgt)
+            midpoint = t_params['num_layers'] / 2
+            tgt_mask = [tgt_mask] * math.floor(midpoint) + [default_tgt_mask] * math.ceil(midpoint)
+        return self.h_to_out(self.decode(None, None, tgt, tgt_mask, residual=b_params['residual_layer']))

@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.distributions as dist
+import torch.optim as optim
 import torch.autograd as autograd
 
 
@@ -13,21 +14,27 @@ def attention(query, key, value, mask=None, dropout=0.0):
     From http://nlp.seas.harvard.edu/2018/04/03/attention.html
     """
     d_k = query.size(-1)
-    scores = torch.matmul(query, key.transpose(-2, -1)) / math.sqrt(d_k)
+    scores = torch.matmul(query, key.transpose(-2, -1)).div(math.sqrt(d_k))
     if mask is not None:
         scores = scores.masked_fill(mask == 0, -1e9)
     p_attn = F.softmax(scores, dim=-1)
-    # (Dropout described below)
     p_attn = F.dropout(p_attn, p=dropout)
     return torch.matmul(p_attn, value), p_attn
 
 
-def gelu(x):
+def gelu_bert(x):
     """BERT's implementation of the gelu activation function.
         For information: OpenAI GPT's gelu is slightly different (and gives slightly different results):
         0.5 * x * (1 + torch.tanh(math.sqrt(2 / math.pi) * (x + 0.044715 * torch.pow(x, 3))))
     """
-    return x * 0.5 * (1.0 + torch.erf(x / math.sqrt(2.0)))
+    return x.mul(0.5) * torch.erf(x / math.sqrt(2.0)).add(1.0)
+
+
+def gelu_gpt(x):
+    return x.mul(0.5) * torch.tanh(math.sqrt(2/math.pi) * (x + 0.044715 * x.pow(3))).add(1.0)
+
+
+gelu = gelu_gpt
 
 
 def swish(x):
@@ -47,6 +54,8 @@ ACT_TO_FUN = {
     'relu': F.relu,
     'lrelu': F.leaky_relu,
     'gelu': gelu,
+    'gelu_bert': gelu_bert,
+    'gelu_gpt': gelu_gpt,
     'swish': swish,
     'log_one_plus_exp': log_one_plus_exp,
     'none': lambda x: x,
@@ -74,7 +83,7 @@ def comb_losses(losses_f, losses_r):
     losses_comb = {}
     for key in losses_f.keys():
         if 'per_seq' in key:
-            losses_comb[key] = torch.stack([losses_f[key], losses_r[key]])
+            losses_comb[key] = torch.stack((losses_f[key], losses_r[key]))
         else:
             losses_comb[key] = losses_f[key] + losses_r[key]
             losses_comb[key + '_f'] = losses_f[key]
@@ -85,12 +94,23 @@ def comb_losses(losses_f, losses_r):
 def subsequent_mask(size):
     """Mask out subsequent positions."""
     attn_shape = (1, size, size)
-    mask = np.triu(np.ones(attn_shape), k=1).astype('uint8')
-    return torch.as_tensor(mask) == 0  # TODO handle more shapes than NLC
+    mask = np.tril(np.ones(attn_shape), k=0).astype('uint8')
+    return torch.as_tensor(mask)  # TODO handle more shapes than NLC
+
+
+def random_subsequent_mask(size):
+    """Mask out randomly ordered subsequent positions."""
+    attn_shape = (1, size, size)
+    mask = np.tril(np.ones(attn_shape), k=0).astype('uint8')
+    order = np.arange(size)
+    np.random.shuffle(order)
+    mask = mask[:, :, order][:, order]
+    mask = np.ascontiguousarray(mask)  # mask should already be contiguous, but statement copies only if necessary.
+    return torch.as_tensor(mask)
 
 
 def diagonal_mask(size):
-    """Mask out subsequent positions."""
+    """Mask out diagonal positions."""
     return torch.diag(torch.ones(size)).unsqueeze(0) == 0  # TODO handle more shapes than NLC
 
 
@@ -109,10 +129,13 @@ def make_1d_mask(src, l_dim=1, c_dim=2):
         return (src.sum(c_dim) != 0).unsqueeze(l_dim)
 
 
-def make_2d_mask(tgt, l_dim=1, c_dim=2):
+def make_2d_mask(tgt, random_order=False, l_dim=1, c_dim=2):
     if tgt is not None:
         tgt_mask = (tgt.sum(c_dim) != 0).unsqueeze(l_dim)
-        tgt_mask = tgt_mask & subsequent_mask(tgt.size(l_dim)).type_as(tgt_mask.data)
+        if random_order:
+            tgt_mask = tgt_mask & random_subsequent_mask(tgt.size(l_dim)).type_as(tgt_mask.data)
+        else:
+            tgt_mask = tgt_mask & subsequent_mask(tgt.size(l_dim)).type_as(tgt_mask.data)
         return tgt_mask
 
 
@@ -190,27 +213,29 @@ normalize = Normalize.apply
 
 
 class NoamOpt:
-    """Optimizer wrapper that implements rate."""
+    """Optimizer wrapper that implements rate.
+    From http://nlp.seas.harvard.edu/2018/04/03/attention.html
+    """
 
     def __init__(self, model_size, factor, warmup, optimizer):
-        self.optimizer: torch.optim.Optimizer = optimizer
+        self.optimizer: optim.Optimizer = optimizer
         self._step = 0
         self.warmup = warmup
         self.factor = factor
         self.model_size = model_size
         self._rate = 0
 
-    def step(self):
-        "Update parameters and rate"
+    def step(self, closure=None):
+        """Update parameters and rate"""
         self._step += 1
         rate = self.rate()
         for p in self.optimizer.param_groups:
             p['lr'] = rate
         self._rate = rate
-        self.optimizer.step()
+        self.optimizer.step(closure=closure)
 
     def rate(self, step=None):
-        "Implement `lrate` above"
+        """Implement `lrate` above"""
         if step is None:
             step = self._step
         return self.factor * \
@@ -282,11 +307,11 @@ def kl_mixture_gaussians(
     prob_one = dist.Normal(mu_one, sigma_one).log_prob(mu) + math.log(clamp(p, 1e-10, 1))
     prob_two = dist.Normal(mu_two, sigma_two).log_prob(mu) + math.log(clamp(1 - p, 1e-10, 1))
     entropy = 0.5 * math.log(2.0 * math.pi * math.e) + sigma.log()
-    return torch.logsumexp(torch.stack([prob_one, prob_two]), dim=0) + entropy
+    return torch.logsumexp(torch.stack((prob_one, prob_two)), dim=0).add(entropy)
 
 
 def mle_mixture_gaussians(w, p=0.1, mu_one=0., sigma_one=1., mu_two=0., sigma_two=0.01):
     """Log probability of w with a scale mixture of gaussians prior"""
     prob_one = dist.Normal(mu_one, sigma_one).log_prob(w) + math.log(clamp(p, 1e-10, 1))
     prob_two = dist.Normal(mu_two, sigma_two).log_prob(w) + math.log(clamp(1-p, 1e-10, 1))
-    return torch.logsumexp(torch.stack([prob_one, prob_two]), dim=0)
+    return torch.logsumexp(torch.stack((prob_one, prob_two)), dim=0)

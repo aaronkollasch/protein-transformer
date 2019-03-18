@@ -12,9 +12,9 @@ import torch
 import torch.nn as nn
 
 
-def clones(module, N):
-    """Produce N identical layers."""
-    return nn.ModuleList([copy.deepcopy(module) for _ in range(N)])
+def clones(module, n):
+    """Produce n identical layers."""
+    return nn.ModuleList([copy.deepcopy(module) for _ in range(n)])
 
 
 def recursive_update(orig_dict, update_dict):
@@ -31,7 +31,7 @@ def comb_losses(losses_f, losses_r):
     losses_comb = {}
     for key in losses_f.keys():
         if 'per_seq' in key:
-            losses_comb[key] = torch.stack([losses_f[key], losses_r[key]])
+            losses_comb[key] = torch.stack((losses_f[key], losses_r[key]))
         else:
             losses_comb[key] = losses_f[key] + losses_r[key]
             losses_comb[key + '_f'] = losses_f[key]
@@ -72,9 +72,9 @@ def get_cuda_path():
 # https://github.com/ilkarman/DeepLearningFrameworks/blob/master/notebooks/common/utils.py
 def get_cuda_version():
     """Get CUDA version"""
-    path = get_cuda_path() + 'version.txt'
-    if path is not None and os.path.isfile(path):
-        with open(path, 'r') as f:
+    path = get_cuda_path()
+    if path is not None and os.path.isfile(path + 'version.txt'):
+        with open(path + 'version.txt', 'r') as f:
             data = f.read().replace('\n', '')
         return data
     else:

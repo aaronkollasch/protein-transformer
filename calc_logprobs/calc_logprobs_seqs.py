@@ -2,6 +2,7 @@
 import argparse
 import os
 import sys
+import json
 
 import numpy as np
 import pandas as pd
@@ -71,8 +72,12 @@ dataset = data_loaders.FastaDataset(
     output_types='encoder' if bert else 'decoder',
 )
 if bert:
-    dataset = data_loaders.BERTPreprocessorDataset(dataset)
-    # dataset.params = checkpoint['dataset_params']  # not needed since randomization disabled in testing
+    dataset_params = checkpoint['dataset_params']
+    dataset = data_loaders.BERTPreprocessorDataset(
+        dataset,
+        mask_freq=dataset_params['mask_freq'],
+        mask_proportion=[0., 0., 1.],
+    )
 loader = data_loaders.GeneratorDataLoader(
     dataset,
     num_workers=args.num_data_workers,
@@ -83,6 +88,8 @@ print("Initializing model")
 dims = checkpoint['model_dims']
 hyperparams = checkpoint['model_hyperparams']
 hyperparams['transformer']['dropout_p'] = args.dropout_p
+# if bert:
+#     hyperparams['bert']['attn_mask_type'] = 'seq,diag'
 model = model_type(dims=dims, hyperparams=hyperparams)
 model.load_state_dict(checkpoint['model_state_dict'])
 model.to(device)
@@ -93,7 +100,18 @@ trainer = trainers.TransformerTrainer(
     data_loader=loader,
     device=device,
 )
-output = trainer.test(loader, model_eval=False, num_samples=args.num_samples)
+
+print()
+print("Model:", model_type.__name__)
+print("Hyperparameters:", json.dumps(model.hyperparams, indent=4))
+print("Trainer:", trainer.__class__.__name__)
+print("Training parameters:", json.dumps(
+    {key: value for key, value in trainer.params.items() if key != 'snapshot_exec_template'}, indent=4))
+print("Dataset:", dataset.__class__.__name__)
+print("Dataset parameters:", json.dumps(dataset.params, indent=4))
+print("Num trainable parameters:", model.parameter_count())
+print()
+output = trainer.test(loader, model_eval=False, dataset_eval=False, num_samples=args.num_samples)
 output = pd.DataFrame(output, columns=output.keys())
 output.to_csv(args.output, index=False)
 print("Done!")

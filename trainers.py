@@ -77,6 +77,9 @@ class TransformerTrainer:
         self.logger.trainer = self
         self.device = device
 
+        if self.bert:
+            self.params['attn_mask_type'] = model.hyperparams['bert']['attn_mask_type']
+
         self.optimizer = NoamOpt(
             model_size=self.model.hyperparams['transformer']['d_model'],
             factor=self.params['lr_factor'],
@@ -116,13 +119,14 @@ class TransformerTrainer:
                         output_logits_r, batch['decoder_output_r'], batch['decoder_mask'], n_eff
                     )
                 elif self.bert:
-                    if 'bert' in self.params['bert_mask_type']:
+                    attn_mask_type = self.params.get('attn_mask_type', 'seq')
+                    if 'bert' in attn_mask_type:
                         bert_attention_1d_mask = ((1-batch['encoder_bert_mask']) * batch['encoder_mask']).byte()
                         bert_attention_2d_mask = make_1d_to_2d_mask(
                             bert_attention_1d_mask,
-                            mask_diag='diag' in self.params['bert_mask_type']
+                            mask_diag='diag' in attn_mask_type
                         )
-                    elif 'diag' in self.params['bert_mask_type']:
+                    elif 'diag' in attn_mask_type:
                         bert_attention_1d_mask = batch['encoder_mask'].byte()
                         bert_attention_2d_mask = make_1d_to_2d_mask(bert_attention_1d_mask, mask_diag=True)
                     else:
@@ -147,9 +151,9 @@ class TransformerTrainer:
                         pass
             except RuntimeError as e:
                 if self.bert:
-                    print("out of memory at ", step, "with input size", batch['encoder_input'].shape, flush=True)
+                    print(batch['encoder_input'].shape, flush=True)
                 else:
-                    print("out of memory at ", step, "with input size", batch['decoder_input'].shape, flush=True)
+                    print(batch['decoder_input'].shape, flush=True)
                 raise e
 
             self.optimizer.zero_grad()
@@ -165,10 +169,11 @@ class TransformerTrainer:
             for key in losses:
                 losses[key] = losses[key].detach()
                 if self.run_fr and 'per_seq' not in key and '_f' not in key and '_r' not in key:
+                    # use sum of FR losses for gradient updates, but mean for display
                     losses[key] /= 2
             losses.update({'grad_norm': total_norm})
 
-            if step in [10000, 25000, 50000, 100000, 250000, 500000, 1000000, 1500000, 2000000, 2500000] or \
+            if step in [2500, 5000, 10000, 25000, 50000, 100000, 250000, 500000, 1000000, 2500000] or \
                     step % self.params['snapshot_interval'] == 0:
                 if self.params['snapshot_path'] is not None:
                     self.save_state()
@@ -179,7 +184,9 @@ class TransformerTrainer:
             #     losses['loss'], losses['ce_loss'], losses['bitperchar']), flush=True)
 
     def validate(self):
-        if not isinstance(self.loader.dataset, IPITrainTestDataset):
+        if isinstance(self.loader.dataset, IPITrainTestDataset):
+            pass
+        else:
             return None
         self.model.eval()
         self.loader.dataset.test()
@@ -228,10 +235,10 @@ class TransformerTrainer:
         self.loader.dataset.unlimited_epoch = True
         return losses, accuracies, true_outputs, logits, roc_scores
 
-    def test(self, data_loader, model_eval=True, num_samples=1):
+    def test(self, data_loader, model_eval=True, dataset_eval=True, num_samples=1):
         if model_eval:
             self.model.eval()
-        if isinstance(data_loader.dataset, TrainTestDataset):
+        if isinstance(data_loader.dataset, TrainTestDataset) and dataset_eval:
             data_loader.dataset.test()
 
         print('sample    step  step-t  CE-loss     bit-per-char', flush=True)
@@ -277,8 +284,20 @@ class TransformerTrainer:
                             output_logits_r, batch['decoder_output_r'], batch['decoder_mask']
                         )
                     elif self.bert:
+                        attn_mask_type = self.params.get('attn_mask_type', 'seq')
+                        if 'bert' in attn_mask_type:
+                            bert_attention_1d_mask = ((1 - batch['encoder_bert_mask']) * batch['encoder_mask']).byte()
+                            bert_attention_2d_mask = make_1d_to_2d_mask(
+                                bert_attention_1d_mask,
+                                mask_diag='diag' in attn_mask_type
+                            )
+                        elif 'diag' in attn_mask_type:
+                            bert_attention_1d_mask = batch['encoder_mask'].byte()
+                            bert_attention_2d_mask = make_1d_to_2d_mask(bert_attention_1d_mask, mask_diag=True)
+                        else:
+                            bert_attention_1d_mask = bert_attention_2d_mask = None
                         output_logits = self.model(batch['encoder_input'], batch['encoder_input'],
-                                                   None, None)
+                                                   bert_attention_1d_mask, bert_attention_2d_mask)
                         losses = self.model.reconstruction_loss(
                             output_logits, batch['encoder_output'], batch['encoder_mask'])
                     else:
@@ -328,12 +347,12 @@ class TransformerTrainer:
             output['reverse'] = np.array(output['reverse']).mean(0)
 
         self.model.train()
-        if isinstance(data_loader.dataset, TrainTestDataset):
+        if isinstance(data_loader.dataset, TrainTestDataset) and dataset_eval:
             data_loader.dataset.train()
         return output
 
     def save_state(self, last_batch=None):
-        snapshot = f"{self.params['snapshot_path']}/{self.params['snapshot_name']}_{self.model.step}.pth"
+        snapshot = f"{self.params['snapshot_path']}/{self.params['snapshot_name']}/{self.model.step}.pth"
         revive_exec = f"{self.params['snapshot_path']}/revive_executable/{self.params['snapshot_name']}.sh"
         if not os.path.exists(os.path.dirname(snapshot)):
             os.makedirs(os.path.dirname(snapshot), exist_ok=True)

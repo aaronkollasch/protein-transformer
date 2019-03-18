@@ -39,10 +39,8 @@ parser.add_argument("--num-layers", type=int, default=6,
                     help="Number of layers.")
 parser.add_argument("--batch-size", metavar='N', type=int, default=10,
                     help="Batch size.")
-parser.add_argument("--num-iterations", type=int, default=100000,
+parser.add_argument("--num-iterations", type=int, default=250005,
                     help="Number of iterations to run the model.")
-parser.add_argument("--num-epochs", type=int, default=None,
-                    help="Number of epochs to run the model. Disables num-iterations.")
 parser.add_argument("--dataset",  metavar='D', type=str, default=None,
                     help="Dataset name for fitting model. Alignment weights must be computed beforehand.")
 parser.add_argument("--num-data-workers", metavar='N', type=int, default=4,
@@ -81,7 +79,7 @@ elif 'large' in args.preset.split('-'):
     args.num_layers = 6
 elif 'XS' in args.preset.split('-'):
     args.d_model = 64
-    args.d_ff = 256
+    args.d_ff = 128
     args.num_heads = 4
     args.num_layers = 6
 elif args.preset is not None:
@@ -89,10 +87,12 @@ elif args.preset is not None:
 
 if args.run_name is None:
     if args.preset is not None:
-        args.run_name = f"{args.dataset}_{args.model_type}-{args.preset}_dropout-{args.dropout_p}" \
+        args.run_name = f"{args.dataset.split('/')[-1].split('.')[0]}" \
+            f"_{args.model_type}-{args.preset}_dropout-{args.dropout_p}" \
             f"_rseed-{args.r_seed}_start-{time.strftime('%y%b%d-%H%M', time.localtime())}"
     else:
-        args.run_name = f"{args.dataset}_{args.model_type}_n-{args.num_layers}_h-{args.num_heads}" \
+        args.run_name = f"{args.dataset.split('/')[-1].split('.')[0]}" \
+            f"_{args.model_type}_n-{args.num_layers}_h-{args.num_heads}" \
             f"_d-{args.d_model}_dff-{args.d_ff}_dropout-{args.dropout_p}" \
             f"_rseed-{args.r_seed}_start-{time.strftime('%y%b%d-%H%M', time.localtime())}"
 
@@ -213,7 +213,7 @@ else:
 # LOAD DATA #
 #############
 
-dataset = data_loaders.SingleFamilyDataset(
+dataset = data_loaders.DoubleWeightedIndexedAntibodyDataset(
     batch_size=args.batch_size,
     working_dir=data_dir,
     dataset=args.dataset,

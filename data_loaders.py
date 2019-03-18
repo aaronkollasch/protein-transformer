@@ -97,6 +97,27 @@ class TrainTestDataset(data.Dataset):
         raise NotImplementedError
 
 
+class TrainValTestDataset(data.Dataset):
+    """A Dataset that has training, validation, and testing modes"""
+    def __init__(self):
+        self._mode = 'train'
+
+    def train(self, mode='train'):
+        self._mode = mode
+
+    def val(self):
+        self.train('val')
+
+    def test(self):
+        self.train('test')
+
+    def __getitem__(self, index):
+        raise NotImplementedError
+
+    def __len__(self):
+        raise NotImplementedError
+
+
 def sequences_to_decoder_onehot(
         sequences, input_char_map, output_char_map, reverse=False, matching=False, start_char='*', end_char='*'):
     num_seqs = len(sequences)
@@ -319,6 +340,7 @@ class FastaDataset(SequenceDataset):
         filename = os.path.join(self.working_dir, self.dataset)
         names_list = []
         sequence_list = []
+        max_seq_len = 0
 
         with open(filename, 'r') as fa:
             for i, (title, seq) in enumerate(SimpleFastaParser(fa)):
@@ -331,11 +353,14 @@ class FastaDataset(SequenceDataset):
 
                 names_list.append(title)
                 sequence_list.append(seq)
+                if len(seq) > max_seq_len:
+                    max_seq_len = len(seq)
 
         self.names = np.array(names_list)
         self.sequences = np.array(sequence_list)
 
         print("Number of sequences:", self.n_eff)
+        print("Max sequence length:", max_seq_len)
 
     @property
     def n_eff(self):
@@ -458,6 +483,7 @@ class SingleFamilyDataset(SequenceDataset):
         print("Number of families:", self.num_families)
         print("Neff:", np.sum(weight_list))
         print("Max family size:", max_family_size)
+        print("Max sequence length:", max_seq_len)
 
         for i, family_name in enumerate(self.family_name_list):
             self.family_name_to_idx[family_name] = i
@@ -516,7 +542,8 @@ class DoubleWeightedNanobodyDataset(SequenceDataset):
         self.load_data()
 
     def load_data(self):
-        filename = self.working_dir + '/datasets/' + self.dataset
+        max_seq_len = 0
+        filename = self.working_dir + self.dataset
         with open(filename, 'r') as fa:
             for i, (title, seq) in enumerate(SimpleFastaParser(fa)):
                 name, clu1, clu2 = title.split(':')
@@ -538,9 +565,12 @@ class DoubleWeightedNanobodyDataset(SequenceDataset):
                 else:
                     self.clu1_to_clu2_to_seq_names[clu1] = {clu2: [name]}
                     self.clu1_to_clu2_to_clu_size[clu1] = {clu2: 1}
+                if len(seq) > max_seq_len:
+                    max_seq_len = len(seq)
 
         self.clu1_list = list(self.clu1_to_clu2_to_seq_names.keys())
         print("Num clusters:", len(self.clu1_list))
+        print("Max sequence length:", max_seq_len)
 
     @property
     def n_eff(self):
@@ -568,6 +598,91 @@ class DoubleWeightedNanobodyDataset(SequenceDataset):
 
         batch = self.sequences_to_onehot(seqs)
         return batch
+
+
+class DoubleWeightedIndexedAntibodyDataset(SequenceDataset):
+    def __init__(
+            self,
+            dataset='',
+            working_dir='.',
+            batch_size=32,
+            unlimited_epoch=True,
+            alphabet_type='protein',
+            reverse=False,
+            matching=False,
+            output_shape='NCHW',
+            output_types='decoder',
+    ):
+        super(DoubleWeightedIndexedAntibodyDataset, self).__init__(
+            batch_size=batch_size,
+            unlimited_epoch=unlimited_epoch,
+            alphabet_type=alphabet_type,
+            reverse=reverse,
+            matching=matching,
+            output_shape=output_shape,
+            output_types=output_types,
+        )
+        self.dataset = dataset
+        self.dataset_f = open(working_dir + dataset)
+        self.dataset_idx = dataset + '.fai'
+        self.working_dir = working_dir
+
+        self.clu1_to_clu2_to_offset = {}
+        self.clu1_list = []
+
+        self.load_data()
+
+    def load_data(self):
+        filename = self.working_dir + self.dataset_idx
+
+        with open(filename, 'r') as f:
+            for line in f:
+                line = line.split('\t')
+                title, offset = line[0], line[2]
+                name, clu1, clu2 = title.split(':')
+
+                if clu1 in self.clu1_to_clu2_to_offset:
+                    if clu2 in self.clu1_to_clu2_to_offset[clu1]:
+                        self.clu1_to_clu2_to_offset[clu1][clu2].append(offset)
+                    else:
+                        self.clu1_to_clu2_to_offset[clu1][clu2] = [offset]
+                else:
+                    self.clu1_to_clu2_to_offset[clu1] = {clu2: [offset]}
+
+        self.clu1_list = list(self.clu1_to_clu2_to_offset.keys())
+        print("Num clusters:", len(self.clu1_list))
+
+    @property
+    def n_eff(self):
+        return len(self.clu1_list)
+
+    def __getitem__(self, index):
+        """
+        :param index: ignored
+        :return: batch of size self.batch_size
+        """
+        seqs = []
+        for i in range(self.batch_size):
+            # Pick a cluster id80
+            clu1_idx = np.random.randint(0, len(self.clu1_list))
+            clu1 = self.clu1_list[clu1_idx]
+
+            # Then pick a cluster id90 from the cluster id80s
+            clu2 = np.random.choice(list(self.clu1_to_clu2_to_offset[clu1].keys()))
+
+            # Then pick a random sequence all in those clusters
+            offset = np.random.choice(self.clu1_to_clu2_to_offset[clu1][clu2])
+
+            # then grab the associated sequence
+            self.dataset_f.seek(offset)
+            seqs.append(self.dataset_f.readline().rstrip())
+
+        batch = self.sequences_to_onehot(seqs)
+        return batch
+
+    def __del__(self):
+        if not self.dataset_f.closed:
+            self.dataset_f.close()
 
 
 class AntibodySequenceDataset(SequenceDataset):
@@ -1186,11 +1301,11 @@ class BERTPreprocessorDataset(SequenceDataset, TrainTestDataset):
         add_shape[c_dim] = len(self.ADDITIONAL_CHARS)
         mask_shape = list(x.size())
         mask_shape[c_dim] = 1
-        x = torch.cat([x.clone(), torch.zeros(add_shape)], c_dim)
-        proportions = torch.cat([
+        x = torch.cat((x.clone(), torch.zeros(add_shape)), c_dim)
+        proportions = torch.cat((
             torch.tensor([1 - self.mask_freq]),
             torch.tensor(self.mask_proportion) * self.mask_freq
-        ])
+        ))
 
         if self._training:
             bert_mask = dist.Categorical(proportions).sample(mask_shape)
