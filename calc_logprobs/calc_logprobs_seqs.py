@@ -32,6 +32,7 @@ parser.add_argument("--no-cuda", action='store_true',
                     help="Disable GPU evaluation")
 args = parser.parse_args()
 
+print('Call:', ' '.join(sys.argv))
 print("OS: ", sys.platform)
 print("Python: ", sys.version)
 print("PyTorch: ", torch.__version__)

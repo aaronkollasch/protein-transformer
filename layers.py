@@ -13,6 +13,45 @@ class HyperparameterError(ValueError):
     pass
 
 
+class Module(nn.Module):
+    """Abstract Module."""
+    def __init__(self):
+        nn.Module.__init__(self)
+        self._step = 0
+
+    @property
+    def step(self):
+        return self._step
+
+    @step.setter
+    def step(self, step):
+        for m in self.modules():
+            if isinstance(m, Module):
+                m._step = step
+
+    def reset_all_parameters(self):
+        for m in self.modules():
+            try:
+                m.reset_parameters()
+            except AttributeError:
+                pass
+
+    def reset_parameters(self):
+        return
+
+    def forward(self, *inputs):
+        raise NotImplementedError
+
+    def weight_costs(self):
+        raise NotImplementedError
+
+    def weight_cost(self):
+        return torch.stack(self.weight_costs()).sum()
+
+    def parameter_count(self):
+        return sum(param.numel() for param in self.parameters())
+
+
 class GaussianWeightUncertainty(object):
     """Implementation of weight uncertainty
     Paper: https://arxiv.org/abs/1505.05424
@@ -66,7 +105,11 @@ class GaussianWeightUncertainty(object):
         del module._parameters[self.name]  # remove w from parameter list
         module.register_parameter(self.name + '_mu', Parameter(weight.data))
         module.register_parameter(self.name + '_rho', Parameter(-7 * torch.ones_like(weight).data))
-        object.__setattr__(module, self.name, self.sample_weight(module))
+
+        # Save detached Tensor during initialization to allow deepcopy of Tensor
+        # during initialization with modules that use deepcopy.
+        # Detached Tensor is replaced with attached Tensor during forward pass.
+        object.__setattr__(module, self.name, self.sample_weight(module).detach())
 
     def remove(self, module):
         weight = getattr(module, self.name + '_mu')

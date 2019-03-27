@@ -9,19 +9,6 @@ import torch.optim as optim
 import torch.autograd as autograd
 
 
-def attention(query, key, value, mask=None, dropout=0.0):
-    """Compute 'Scaled Dot Product Attention'
-    From http://nlp.seas.harvard.edu/2018/04/03/attention.html
-    """
-    d_k = query.size(-1)
-    scores = torch.matmul(query, key.transpose(-2, -1)).div(math.sqrt(d_k))
-    if mask is not None:
-        scores = scores.masked_fill(mask == 0, -1e9)
-    p_attn = F.softmax(scores, dim=-1)
-    p_attn = F.dropout(p_attn, p=dropout)
-    return torch.matmul(p_attn, value), p_attn
-
-
 def gelu_bert(x):
     """BERT's implementation of the gelu activation function.
         For information: OpenAI GPT's gelu is slightly different (and gives slightly different results):

@@ -147,7 +147,7 @@ class TransformerTrainer:
                               f'GPU Mem Allocated: {round(torch.cuda.memory_allocated(0) / 1024 ** 3, 1)} GB, '
                               f'Cached: {round(torch.cuda.memory_cached(0) / 1024 ** 3, 1)} GB',
                               flush=True)
-                    except AttributeError:
+                    except (AttributeError, RuntimeError):
                         pass
             except RuntimeError as e:
                 if self.bert:

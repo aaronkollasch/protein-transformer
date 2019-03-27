@@ -4,7 +4,6 @@ import argparse
 import time
 import json
 import warnings
-import hashlib
 import math
 
 import numpy as np
@@ -182,24 +181,24 @@ if args.model_type == 'transformer-fr':
 elif args.model_type == 'BERT':
     model_type = models.UnconditionedBERT
     bert = True
-    if 'masked' in args.preset:
+    if 'masked' in args.preset.split('-'):
         bert_params['attn_mask_type'] = 'seq,bert'
         if 'allmasked' in args.preset:
             bert_params['attn_mask_layer'] = 'all'
         elif 'halfmasked' in args.preset:
             bert_params['attn_mask_layer'] = 'first_half'
-    if 'nokeep' in args.preset:
+    if 'nokeep' in args.preset.split('-'):
         bert_mask_freq = 0.15
         bert_mask_proportion = (0.8, 0.2, 0.0)
-    elif 'allrandom' in args.preset:
+    elif 'allrandom' in args.preset.split('-'):
         bert_mask_freq = 0.1
         bert_mask_proportion = (0.0, 1.0, 0.0)
-        if 'masked' in args.preset:
+        if 'masked' in args.preset.split('-'):
             bert_mask_freq = 0.15
-    elif 'allkeep' in args.preset:
+    elif 'allkeep' in args.preset.split('-'):
         bert_mask_freq = 0.15
         bert_mask_proportion = (0.0, 0.0, 1.0)
-        if 'masked' in args.preset:
+        if 'masked' in args.preset.split('-'):
             bert_params['attn_mask_type'] = 'seq,bert,diag'
 
             # block residual in first layer to prevent info leakage
@@ -267,6 +266,7 @@ else:
             'num_heads': args.num_heads,
             'num_layers': args.num_layers,
             'dropout_p': args.dropout_p,
+            'pe_random_start': 'randomstart' in args.preset.split('-'),
         }
     }
     if bert:

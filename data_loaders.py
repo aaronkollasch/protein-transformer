@@ -601,6 +601,12 @@ class DoubleWeightedNanobodyDataset(SequenceDataset):
 
 
 class DoubleWeightedIndexedAntibodyDataset(SequenceDataset):
+    """
+    Reads an indexed fasta dataset.
+    Index filename is (fasta_file).fai
+    Create index using `samtools faidx (fasta file)`.
+    """
+
     def __init__(
             self,
             dataset='',
@@ -623,7 +629,7 @@ class DoubleWeightedIndexedAntibodyDataset(SequenceDataset):
             output_types=output_types,
         )
         self.dataset = dataset
-        self.dataset_f = open(working_dir + dataset)
+        self.dataset_f = os.path.join(working_dir, dataset)
         self.dataset_idx = dataset + '.fai'
         self.working_dir = working_dir
 
@@ -633,13 +639,13 @@ class DoubleWeightedIndexedAntibodyDataset(SequenceDataset):
         self.load_data()
 
     def load_data(self):
-        filename = self.working_dir + self.dataset_idx
+        filename = os.path.join(self.working_dir, self.dataset_idx)
 
-        with open(filename, 'r') as f:
+        with open(filename, 'rb') as f:
             for line in f:
-                line = line.split('\t')
-                title, offset = line[0], line[2]
-                name, clu1, clu2 = title.split(':')
+                line = line.split(b'\t')
+                title, offset = line[0], int(line[2])
+                name, clu1, clu2 = title.split(b':')
 
                 if clu1 in self.clu1_to_clu2_to_offset:
                     if clu2 in self.clu1_to_clu2_to_offset[clu1]:
@@ -661,28 +667,32 @@ class DoubleWeightedIndexedAntibodyDataset(SequenceDataset):
         :param index: ignored
         :return: batch of size self.batch_size
         """
+        offsets = []
         seqs = []
-        for i in range(self.batch_size):
-            # Pick a cluster id80
-            clu1_idx = np.random.randint(0, len(self.clu1_list))
-            clu1 = self.clu1_list[clu1_idx]
 
-            # Then pick a cluster id90 from the cluster id80s
-            clu2 = np.random.choice(list(self.clu1_to_clu2_to_offset[clu1].keys()))
+        with open(self.dataset_f, 'rt', buffering=1) as dataset_f:
+            for i in range(self.batch_size):
+                # Pick a cluster id80
+                clu1_idx = np.random.randint(0, len(self.clu1_list))
+                clu1 = self.clu1_list[clu1_idx]
 
-            # Then pick a random sequence all in those clusters
-            offset = np.random.choice(self.clu1_to_clu2_to_offset[clu1][clu2])
+                # Then pick a cluster id90 from the cluster id80s
+                clu2 = np.random.choice(list(self.clu1_to_clu2_to_offset[clu1].keys()))
 
-            # then grab the associated sequence
-            self.dataset_f.seek(offset)
-            seqs.append(self.dataset_f.readline().rstrip())
+                # Then pick a random sequence all in those clusters
+                offset = np.random.choice(self.clu1_to_clu2_to_offset[clu1][clu2])
+                offsets.append(offset)
 
-        batch = self.sequences_to_onehot(seqs)
-        return batch
+                # then grab the associated sequence
+                dataset_f.seek(offset)
+                seqs.append(dataset_f.readline().rstrip())
 
-    def __del__(self):
-        if not self.dataset_f.closed:
-            self.dataset_f.close()
+        try:
+            batch = self.sequences_to_onehot(seqs)
+            return batch
+        except KeyError as e:
+            print(offsets, seqs, flush=True)
+            raise e
 
 
 class AntibodySequenceDataset(SequenceDataset):

@@ -4,7 +4,6 @@ import argparse
 import time
 import json
 import warnings
-import hashlib
 import math
 
 import numpy as np
@@ -17,7 +16,7 @@ import model_logging
 from utils import get_cuda_version, get_cudnn_version
 
 working_dir = '/n/groups/marks/users/aaron/transformer'
-data_dir = '/n/groups/marks/projects/autoregressive'
+data_dir = '/n/groups/marks/projects/antibodies'
 
 
 ###################
@@ -41,9 +40,11 @@ parser.add_argument("--batch-size", metavar='N', type=int, default=10,
                     help="Batch size.")
 parser.add_argument("--num-iterations", type=int, default=250005,
                     help="Number of iterations to run the model.")
+parser.add_argument("--num-epochs", type=int, default=None,
+                    help="Number of epochs to run the model. Disables num-iterations.")
 parser.add_argument("--dataset",  metavar='D', type=str, default=None,
                     help="Dataset name for fitting model. Alignment weights must be computed beforehand.")
-parser.add_argument("--num-data-workers", metavar='N', type=int, default=4,
+parser.add_argument("--num-data-workers", metavar='N', type=int, default=8,
                     help="Number of workers to load data")
 parser.add_argument("--restore", type=str, default=None,
                     help="Snapshot path for restoring a model to continue training.")
@@ -79,7 +80,7 @@ elif 'large' in args.preset.split('-'):
     args.num_layers = 6
 elif 'XS' in args.preset.split('-'):
     args.d_model = 64
-    args.d_ff = 128
+    args.d_ff = 256
     args.num_heads = 4
     args.num_layers = 6
 elif args.preset is not None:
@@ -267,6 +268,7 @@ else:
             'num_heads': args.num_heads,
             'num_layers': args.num_layers,
             'dropout_p': args.dropout_p,
+            'pe_random_start': 'randomstart' in args.preset.split('-'),
         }
     }
     if bert:
