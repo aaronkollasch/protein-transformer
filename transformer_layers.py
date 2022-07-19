@@ -323,6 +323,7 @@ class PositionalEncoding(layers.Module):
 
     def __init__(self, d_model, dropout, max_len=5000, random_start=False):
         super(PositionalEncoding, self).__init__()
+        self.d_model = d_model
         self.dropout = nn.Dropout(p=dropout)
         self.max_len = max_len
         self.random_start = random_start
@@ -347,6 +348,10 @@ class PositionalEncoding(layers.Module):
 
     def weight_costs(self):
         return []
+
+    def extra_repr(self):
+        return f'd_model={self.d_model}, dropout={self.dropout.p}, max_len={self.max_len}, ' \
+            f'random_start={self.random_start}'
 
 
 class Embeddings(layers.Module):
@@ -389,3 +394,6 @@ class LabelSmoothing(layers.Module):
 
     def weight_costs(self):
         return []
+
+    def extra_repr(self):
+        return f'size={self.size}, smoothing={self.smoothing}'

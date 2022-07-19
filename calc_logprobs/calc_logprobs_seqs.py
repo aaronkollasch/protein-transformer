@@ -26,6 +26,8 @@ parser.add_argument("--batch-size", metavar='N', type=int, default=100,
                     help="Batch size.")
 parser.add_argument("--dropout-p", type=float, default=0.,
                     help="Dropout p while sampling log p(x) (drop rate, not keep rate)")
+parser.add_argument("--pe-random-start", action='store_true',
+                    help="Use a random start for the position embedding")
 parser.add_argument("--num-data-workers", type=int, default=0,
                     help="Number of workers to load data")
 parser.add_argument("--no-cuda", action='store_true',
@@ -89,6 +91,7 @@ print("Initializing model")
 dims = checkpoint['model_dims']
 hyperparams = checkpoint['model_hyperparams']
 hyperparams['transformer']['dropout_p'] = args.dropout_p
+hyperparams['transformer']['pe_random_start'] = args.pe_random_start
 # if bert:
 #     hyperparams['bert']['attn_mask_type'] = 'seq,diag'
 model = model_type(dims=dims, hyperparams=hyperparams)

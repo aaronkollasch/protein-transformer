@@ -44,7 +44,7 @@ parser.add_argument("--num-epochs", type=int, default=None,
                     help="Number of epochs to run the model. Disables num-iterations.")
 parser.add_argument("--dataset",  metavar='D', type=str, default=None,
                     help="Dataset name for fitting model. Alignment weights must be computed beforehand.")
-parser.add_argument("--num-data-workers", metavar='N', type=int, default=8,
+parser.add_argument("--num-data-workers", metavar='N', type=int, default=4,
                     help="Number of workers to load data")
 parser.add_argument("--restore", type=str, default=None,
                     help="Snapshot path for restoring a model to continue training.")

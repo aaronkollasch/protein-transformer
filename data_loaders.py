@@ -509,7 +509,7 @@ class SingleFamilyDataset(SequenceDataset):
         return batch
 
 
-class DoubleWeightedNanobodyDataset(SequenceDataset):
+class DoubleWeightedAntibodyDataset(SequenceDataset):
     def __init__(
             self,
             dataset='',
@@ -522,7 +522,7 @@ class DoubleWeightedNanobodyDataset(SequenceDataset):
             output_shape='NCHW',
             output_types='decoder',
     ):
-        super(DoubleWeightedNanobodyDataset, self).__init__(
+        super(DoubleWeightedAntibodyDataset, self).__init__(
             batch_size=batch_size,
             unlimited_epoch=unlimited_epoch,
             alphabet_type=alphabet_type,
@@ -543,6 +543,8 @@ class DoubleWeightedNanobodyDataset(SequenceDataset):
 
     def load_data(self):
         max_seq_len = 0
+        num_subclusters = 0
+        num_seqs = 0
         filename = self.working_dir + self.dataset
         with open(filename, 'r') as fa:
             for i, (title, seq) in enumerate(SimpleFastaParser(fa)):
@@ -562,14 +564,20 @@ class DoubleWeightedNanobodyDataset(SequenceDataset):
                     else:
                         self.clu1_to_clu2_to_seq_names[clu1][clu2] = [name]
                         self.clu1_to_clu2_to_clu_size[clu1][clu2] = 1
+                        num_subclusters += 1
                 else:
                     self.clu1_to_clu2_to_seq_names[clu1] = {clu2: [name]}
                     self.clu1_to_clu2_to_clu_size[clu1] = {clu2: 1}
+                    num_subclusters += 1
+
                 if len(seq) > max_seq_len:
                     max_seq_len = len(seq)
+                num_seqs += 1
 
         self.clu1_list = list(self.clu1_to_clu2_to_seq_names.keys())
         print("Num clusters:", len(self.clu1_list))
+        print("Num subclusters:", num_subclusters)
+        print("Num sequences:", num_seqs)
         print("Max sequence length:", max_seq_len)
 
     @property
@@ -640,11 +648,13 @@ class DoubleWeightedIndexedAntibodyDataset(SequenceDataset):
 
     def load_data(self):
         filename = os.path.join(self.working_dir, self.dataset_idx)
-
+        max_seq_len = 0
+        num_subclusters = 0
+        num_seqs = 0
         with open(filename, 'rb') as f:
             for line in f:
                 line = line.split(b'\t')
-                title, offset = line[0], int(line[2])
+                title, length, offset = line[0], int(line[1]), int(line[2])
                 name, clu1, clu2 = title.split(b':')
 
                 if clu1 in self.clu1_to_clu2_to_offset:
@@ -652,11 +662,20 @@ class DoubleWeightedIndexedAntibodyDataset(SequenceDataset):
                         self.clu1_to_clu2_to_offset[clu1][clu2].append(offset)
                     else:
                         self.clu1_to_clu2_to_offset[clu1][clu2] = [offset]
+                        num_subclusters += 1
                 else:
                     self.clu1_to_clu2_to_offset[clu1] = {clu2: [offset]}
+                    num_subclusters += 1
+
+                if length > max_seq_len:
+                    max_seq_len = length
+                num_seqs += 1
 
         self.clu1_list = list(self.clu1_to_clu2_to_offset.keys())
         print("Num clusters:", len(self.clu1_list))
+        print("Num subclusters:", num_subclusters)
+        print("Num sequences:", num_seqs)
+        print("Max sequence length:", max_seq_len)
 
     @property
     def n_eff(self):
