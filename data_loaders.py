@@ -447,8 +447,21 @@ class SingleFamilyDataset(SequenceDataset):
             family_size = 0
             ind_family_idx_list = []
             with open(filename, 'r') as fa:
+                # check if first sequence header has a sequence weight
+                line = 'start'
+                while line:
+                    line = fa.readline().rstrip()
+                    if line[0] == '>':
+                        break
+                try:
+                    weight = float(line.rsplit(':', 1)[-1])
+                    uniform_weights = False
+                except ValueError:
+                    print(f"No sequence weights detected: {line}\nUsing uniform weights.")
+                    uniform_weights = True
+                fa.seek(0)
                 for i, (title, seq) in enumerate(SimpleFastaParser(fa)):
-                    weight = float(title.split(':')[-1])
+                    weight = 1.0 if uniform_weights else float(title.rsplit(':', 1)[-1])
                     valid = True
                     for letter in seq:
                         if letter not in self.aa_dict:
